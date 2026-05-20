@@ -1,0 +1,16 @@
+{
+  "family": "RPI_Official_DSI",
+  "display_name": "Raspberry Pi Official DSI",
+  "panels": [
+    {
+      "id": "7_0",
+      "display_name": "Raspberry Pi Touch Display (7.0inch)",
+      "lanes": 1,
+      "clock_frequency": 30000000,
+      "hactive": 800, "vactive": 480,
+      "vsync_len": 22, "vback_porch": 2, "vfront_porch": 7,
+      "hsync_len": 45, "hback_porch": 2, "hfront_porch": 131,
+      "vsync_active": 0, "hsync_active": 0, "de_active": 0, "pixelclk_active": 0
+    }
+  ]
+}

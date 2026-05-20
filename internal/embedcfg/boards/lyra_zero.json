@@ -1,0 +1,49 @@
+{
+  "id": "lyra_zero",
+  "chip": "rk3506",
+  "split_spi": true,
+  "config_mode": "rmio",
+  "pinctrl_naming": "v2",
+  "model_strings": ["Luckfox Lyra Zero", "Luckfox Lyra Zero W"],
+  "boot_media": {
+    "mmc":  "/dev/mmcblk0p2",
+    "nand": "/dev/mtdblock1"
+  },
+  "features": {
+    "has_4g_module": false,
+    "dsi_fdt_node": "/dsi@ff640000"
+  },
+  "reserved_pins": [],
+  "pin_diagram": [
+    "                Luckfox_Lyra Zero",
+    "                     + -USB- +",
+    "-         -  3V3_OUT |       | VSYS     -         -",
+    "- RM_IO0  - GPIO0_A0 |       | VSYS     -         -",
+    "- RM_IO1  - GPIO0_A1 |       | GND      -         -",
+    "- RM_IO2  - GPIO0_A2 |       | GPIO0_C6 - RM_IO22 -",
+    "-         -      GND |       | GPIO0_C7 - RM_IO23 -",
+    "- RM_IO3  - GPIO0_A3 |       | GPIO0_B6 - RM_IO14 -",
+    "- RM_IO4  - GPIO0_A4 |       | GND      -         -",
+    "- RM_IO5  - GPIO0_A5 |       | GPIO0_B5 - RM_IO13 -",
+    "-         -  3V3_OUT |       | GPIO0_B4 - RM_IO12 -",
+    "- RM_IO6  - GPIO0_A6 |       | GND      -         -",
+    "- RM_IO7  - GPIO0_A7 |       | GPIO0_B3 - RM_IO11 -",
+    "- RM_IO8  - GPIO0_B0 |       | GPIO0_B2 - RM_IO10 -",
+    "-         -      GND |       | GPIO0_B1 - RM_IO9  -",
+    "- RM_IO24 - GPIO1_B1 |       | GPIO1_D3 - RM_IO31 -",
+    "- RM_IO25 - GPIO1_B2 |       | GND      -         -",
+    "- RM_IO26 - GPIO1_B3 |       | GPIO1_D2 - RM_IO30 -",
+    "- RM_IO27 - GPIO1_C2 |       | GND      -         -",
+    "- RM_IO16 - GPIO0_C0 |       | GPIO1_D1 - RM_IO29 -",
+    "- RM_IO28 - GPIO1_C3 |       | GPIO0_C1 - RM_IO17 -",
+    "-         -      GND |       | GPIO0_C2 - RM_IO18 -",
+    "                     + - + - +"
+  ],
+  "peripherals": {
+    "uart": ["1", "2", "3", "4"],
+    "i2c":  ["0", "1", "2"],
+    "spi":  ["0", "1"],
+    "can":  ["0", "1"],
+    "pwm":  ["0_0", "0_1", "0_2", "0_3", "1_0", "1_1", "1_2", "1_3", "1_4", "1_5", "1_6", "1_7"]
+  }
+}

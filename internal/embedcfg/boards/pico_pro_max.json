@@ -1,0 +1,54 @@
+{
+  "id": "pico_pro_max",
+  "chip": "rv1106",
+  "config_mode": "normal",
+  "pinctrl_naming": "v1",
+  "split_spi": true,
+  "model_strings": ["Luckfox Pico Pro", "Luckfox Pico Max", "Luckfox Pico Pro Max"],
+  "boot_media": {
+    "mmc": "/dev/mmcblk0p4",
+    "nand": "/dev/mtdblock3"
+  },
+  "features": {
+    "has_4g_module": false,
+    "has_fbtft": true,
+    "has_usb": true,
+    "has_csi": false,
+    "has_rgb": false,
+    "has_sdmmc": false
+  },
+  "reserved_pins": [],
+  "pin_diagram": [
+    "                                 Luckfox_Pico_Pro_Max",
+    "                                     + -USB- +",
+    "          - FIQtty_TX     - GPIO1_B2 |       | VBUS     -             -",
+    "          - FIQtty_RX     - GPIO1_B3 |       | VSYS     -             -",
+    "          -               -      GND |       | GND      -             -",
+    " PWM11_M1 - UART4_M1_CTS  - GPIO1_C7 |       | 3V3_EN   -             -",
+    " PWM10_M1 - UART4_M1_RTS  - GPIO1_C6 |       | 3V3_OUT  -             -",
+    " PWM9_M1  - UART4_M1_TX   - GPIO1_C5 |       | NC       -             -",
+    " PWM8_M1  - UART4_M1_RX   - GPIO1_C4 |       | GPIO2_A7 - I2C3_M0_SDA -",
+    "          -               -      GND |       | GND      -             -",
+    " PWM0_M1  - I2C3_M1_SDA   - GPIO1_D2 |       | GPIO4_C1 - SARADC_M1   -",
+    " PWM11_M2 - I2C3_M1_SCL   - GPIO1_D3 |       | GPIO4_C0 - SARADC_M0   -",
+    " PWM6_M1  - I2C1_M1_SDA   - GPIO2_B1 |       | RESET    -             -",
+    " PWM2_M2  - SPI0_M0_CS0   - GPIO1_C0 |       | GPIO2_A6 - I2C3_M0_SCL -",
+    "          -               -      GND |       | GND      -             -",
+    " PWM4_M2  - SPI0_M0_CLK   - GPIO1_C1 |       | GPIO2_A3 -             -",
+    " PWM5_M2  - SPI0_M0_MOSI  - GPIO1_C2 |       | GPIO2_A2 -             -",
+    " PWM6_M2  - SPI0_M0_MISO  - GPIO1_C3 |       | GPIO2_A1 -             -",
+    " PWM5_M1  - I2C1_M1_SCL   - GPIO2_B0 |       | GPIO2_A0 -             -",
+    "          -               -      GND |       | GND      -             -",
+    " PWM3_M2  - UART3_M1_TX   - GPIO1_D0 |       | GPIO2_A5 - UART1_M1_RX -",
+    " PWM10_M2 - UART3_M1_RX   - GPIO1_D1 |       | GPIO2_A4 - UART1_M1_TX -",
+    "                                     + - + - +"
+  ],
+  "peripherals": {
+    "uart": ["1_M1", "3_M1", "4_M1"],
+    "i2c": ["1_M1", "3_M0", "3_M1"],
+    "spi": ["0_M0"],
+    "pwm": ["11_M1", "10_M1", "9_M1", "8_M1", "0_M1", "11_M2", "6_M1", "2_M2", "4_M2", "5_M2", "6_M2", "5_M1", "3_M2", "10_M2"],
+    "compatible_apps": ["Pico_LCD", "Pico_ePaper", "Pico_UPS_B", "Pico_ResTouch_LCD", "OLED_Module", "Pico_OLED", "DHT11"],
+    "fbtft": ["GPIO2_B1", "GPIO1_C0", "GPIO1_C1", "GPIO1_C2", "GPIO1_C3", "GPIO2_B0"]
+  }
+}

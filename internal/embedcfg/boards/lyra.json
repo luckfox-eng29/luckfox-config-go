@@ -1,0 +1,52 @@
+{
+  "id": "lyra_plus",
+  "chip": "rk3506",
+  "split_spi": true,
+  "config_mode": "rmio",
+  "pinctrl_naming": "v2",
+  "model_strings": ["Luckfox Lyra", "Luckfox Lyra Plus"],
+  "boot_media": {
+    "mmc":  "/dev/mmcblk0p2",
+    "nand": "/dev/mtdblock1"
+  },
+  "features": {
+    "has_4g_module": false,
+    "dsi_fdt_node": "/dsi@ff640000"
+  },
+  "reserved_pins": [
+    { "gpio": "GPIO0_C6", "reason": "USB" },
+    { "gpio": "GPIO0_C7", "reason": "USB" }
+  ],
+  "pin_diagram": [
+    "            Luckfox_Lyra/Luckfox_Lyra_Plus",
+    "                     + -USB- +",
+    "- RM_IO22 - GPIO0_C6 |       | VBUS     -         -",
+    "- RM_IO23 - GPIO0_C7 |       | VSYS     -         -",
+    "-         -      GND |       | GND      -         -",
+    "- RM_IO12 - GPIO0_B4 |       | 3V3_EN   -         -",
+    "- RM_IO13 - GPIO0_B5 |       | 3V3_OUT  -         -",
+    "- RM_IO0  - GPIO0_A0 |       | NC       -         -",
+    "- RM_IO1  - GPIO0_A1 |       | GPIO1_B1 - RM_IO24 -",
+    "-         -      GND |       | GND      -         -",
+    "- RM_IO11 - GPIO0_B3 |       | GPIO4_B3 - ADC_IN3 -",
+    "- RM_IO10 - GPIO0_B2 |       | GPIO4_B2 - ADC_IN2 -",
+    "- RM_IO9  - GPIO0_B1 |       | RESET    -         -",
+    "- RM_IO8  - GPIO0_B0 |       | GPIO1_B2 - RM_IO25 -",
+    "-         -      GND |       | GND      -         -",
+    "- RM_IO7  - GPIO0_A7 |       | GPIO1_B3 - RM_IO26 -",
+    "- RM_IO6  - GPIO0_A6 |       | GPIO1_C2 - RM_IO27 -",
+    "- RM_IO5  - GPIO0_A5 |       | GPIO1_C3 - RM_IO28 -",
+    "- RM_IO4  - GPIO0_A4 |       | GPIO1_D1 - RM_IO29 -",
+    "-         -      GND |       | GND      -         -",
+    "- RM_IO3  - GPIO0_A3 |       | GPIO1_D2 - RM_IO30 -",
+    "- RM_IO2  - GPIO0_A2 |       | GPIO1_D3 - RM_IO31 -",
+    "                     + - + - +"
+  ],
+  "peripherals": {
+    "uart": ["1", "2", "3", "4"],
+    "i2c":  ["0", "1", "2"],
+    "spi":  ["0", "1"],
+    "can":  ["0", "1"],
+    "pwm":  ["0_0", "0_1", "0_2", "0_3", "1_0", "1_1", "1_2", "1_3", "1_4", "1_5", "1_6", "1_7"]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "id": "luckfox-aura",
+  "chip": "rv1126b",
+  "config_mode": "normal",
+  "pinctrl_naming": "v2",
+  "split_spi": false,
+  "model_strings": ["Luckfox Aura"],
+  "boot_media": {
+    "mmc": ["/dev/mmcblk1p4", "/dev/mmcblk0p4"]
+  },
+  "features": {
+    "has_dsi": true,
+    "dsi_fdt_node": "/dsi@22120000",
+    "has_csi": true,
+    "has_4g": false
+  },
+  "pin_diagram": [
+    "                                                   Luckfox_Aura",
+    "                                                    + - + - +",
+    "             -             -             -      3V3 |       | 5V",
+    " PWM0_M0_CH5 - I2C2_M0_SCL -             - GPIO0_D1 |       | 5V",
+    " PWM0_M0_CH4 - I2C2_M0_SDA -             - GPIO0_D0 |       | GND",
+    "             -             - UART7_M0_TX - GPIO5_B4 |       | GPIO5_A2 - UART4_M1_TX -             - PWM0_M2_CH5",
+    "             -             -             -      GND |       | GPIO5_A3 - UART4_M1_RX - SPI0_M2_CS0 - PWM0_M2_CH4",
+    " PWM3_M1_CH2 -             -             - GPIO5_C2 |       | GPIO5_C5 -             -             - PWM3_M1_CH5",
+    " PWM3_M1_CH3 -             -             - GPIO5_C3 |       | GND",
+    " PWM3_M1_CH4 -             -             - GPIO5_C4 |       | GPIO5_C6 -             -             - PWM3_M1_CH6",
+    "             -             -             -      3V3 |       | GPIO5_C7 -             -             - PWM3_M1_CH7",
+    " PWM1_M1_CH1 - SPI1_M2_MOSI-             - GPIO5_D2 |       | GND",
+    " PWM1_M1_CH0 - SPI1_M2_MISO-             - GPIO5_D3 |       | GPIO5_B6 - UART7_M0_RTS-             - PWM2_M1_CH2",
+    " PWM1_M1_CH2 - SPI1_M2_CLK -             - GPIO5_D1 |       | GPIO5_D0 -             - SPI1_M2_CS0 - PWM0_M2_CH6",
+    "             -             -             -      GND |       | GPIO5_B7 - UART7_M0_CTS-             - PWM2_M1_CH3",
+    " PWM0_M1_CH0 - I2C5_M2_SDA - UART5_M1_CTS- GPIO5_A7 |       | GPIO5_A1 - UART4_M1_CTS- I2C5_M2_SCL - PWM2_M0_CH5",
+    "             -             - UART7_M0_RX - GPIO5_B5 |       | GND      -             -             -",
+    " PWM2_M1_CH0 -             - UART6_M0_RTS- GPIO5_B2 |       | GPIO5_B0 - UART6_M0_TX -             -",
+    "             -             - UART6_M0_RX - GPIO5_B1 |       | GND      -             -             -",
+    " PWM0_M1_CH2 - SPI0_M2_MISO- UART5_M1_RX - GPIO5_A5 |       | GPIO5_A0 - UART4_M1_RTS-             - PWM2_M0_CH4",
+    " PWM2_M1_CH1 -             - UART6_M0_CTS- GPIO5_B3 |       | GPIO5_A4 - UART5_M1_TX - SPI0_M2_MOSI- PWM0_M1_CH3",
+    "             -             -             -      GND |       | GPIO5_A6 - UART5_M1_RTS- SPI0_M2_CLK - PWM0_M1_CH1",
+    "                                                    + - + - +"
+  ],
+  "peripherals": {
+    "pwm": ["0_5_M0", "0_4_M0", "0_5_M2", "0_4_M2", "3_2_M1", "3_5_M1", "3_3_M1", "3_4_M1", "3_6_M1", "3_7_M1", "1_1_M1", "1_0_M1", "2_2_M1", "1_2_M1", "0_6_M2", "2_3_M1", "0_0_M1", "2_5_M0", "2_0_M1", "0_2_M1", "2_4_M0", "2_1_M1", "0_3_M1", "0_1_M1"],
+    "uart": ["4_M1", "5_M1", "6_M0", "7_M0"],
+    "i2c": ["2_M0", "5_M2"],
+    "spi": ["0_M2", "1_M2"]
+  }
+}
