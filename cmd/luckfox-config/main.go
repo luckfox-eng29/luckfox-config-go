@@ -28,9 +28,11 @@ import (
 	"luckfox-config/internal/peripheral"
 	"luckfox-config/internal/pindiagram"
 	"luckfox-config/internal/tui"
+	"luckfox-config/internal/version"
 )
 
 var debug bool
+var showVersion bool
 
 const (
 	loadChildEnv = "LUCKFOX_CONFIG_LOAD_CHILD"
@@ -42,6 +44,10 @@ func main() {
 		Use:   "luckfox-config",
 		Short: "Luckfox Lyra board configuration tool",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if showVersion {
+				fmt.Fprintln(cmd.OutOrStdout(), version.String())
+				os.Exit(0)
+			}
 			if debug {
 				logger.SetLevel(slog.LevelDebug)
 			}
@@ -49,6 +55,7 @@ func main() {
 		RunE: runTUI,
 	}
 	root.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
+	root.PersistentFlags().BoolVarP(&showVersion, "version", "v", false, "Print version and exit")
 
 	registerPeripheralCommands(root)
 

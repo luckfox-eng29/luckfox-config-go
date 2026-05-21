@@ -7,7 +7,11 @@ GOARCH   ?= arm
 GOARM    ?= 7
 GOOS     ?= linux
 
-LDFLAGS  := -ldflags="-s -w"
+VERSION  ?= v0.0.1
+COMMIT   ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE     ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+LDFLAGS  := -ldflags="-s -w -X luckfox-config/internal/version.Version=$(VERSION) -X luckfox-config/internal/version.Commit=$(COMMIT) -X luckfox-config/internal/version.BuildDate=$(DATE)"
 
 .PHONY: build build-arm build-arm64 build-all build-native clean run-show
 
