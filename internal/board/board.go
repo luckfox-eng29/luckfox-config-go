@@ -68,14 +68,19 @@ type ReservedPin struct {
 	Reason string `json:"reason"`
 }
 
+type FBTFTPins struct {
+	GPIO []string `json:"gpio"`
+	SPI  []string `json:"spi"`
+}
+
 type PeripheralSet struct {
-	UART           []string `json:"uart"`
-	I2C            []string `json:"i2c"`
-	SPI            []string `json:"spi"`
-	CAN            []string `json:"can"`
-	PWM            []string `json:"pwm"`
-	CompatibleApps []string `json:"compatible_apps"`
-	FBTFTPins      []string `json:"fbtft"`
+	UART           []string  `json:"uart"`
+	I2C            []string  `json:"i2c"`
+	SPI            []string  `json:"spi"`
+	CAN            []string  `json:"can"`
+	PWM            []string  `json:"pwm"`
+	CompatibleApps []string  `json:"compatible_apps"`
+	FBTFT          FBTFTPins `json:"fbtft"`
 }
 
 // PWMConfig is no longer used but kept for a moment if needed for migration logic.

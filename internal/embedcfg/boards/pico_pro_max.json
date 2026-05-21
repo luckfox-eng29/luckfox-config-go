@@ -49,6 +49,9 @@
     "spi": ["0_M0"],
     "pwm": ["11_M1", "10_M1", "9_M1", "8_M1", "0_M1", "11_M2", "6_M1", "2_M2", "4_M2", "5_M2", "6_M2", "5_M1", "3_M2", "10_M2"],
     "compatible_apps": ["Pico_LCD", "Pico_ePaper", "Pico_UPS_B", "Pico_ResTouch_LCD", "OLED_Module", "Pico_OLED", "DHT11"],
-    "fbtft": ["GPIO2_B1", "GPIO1_C0", "GPIO1_C1", "GPIO1_C2", "GPIO1_C3", "GPIO2_B0"]
+    "fbtft": {
+      "gpio": ["GPIO2_B1", "GPIO2_B0", "GPIO1_C3"],
+      "spi": ["SPI0_M0_CS0", "SPI0_M0_CLK", "SPI0_M0_MOSI"]
+    }
   }
 }

@@ -304,7 +304,7 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 
 	// FBTFT
 	if bc.Features.HasFBTFT {
-		reg.Register(peripheral.NewFBTFT(deps, bc.Peripherals.FBTFTPins))
+		reg.Register(peripheral.NewFBTFT(deps, bc.Peripherals.FBTFT.GPIO, bc.Peripherals.FBTFT.SPI))
 	}
 
 	// USB

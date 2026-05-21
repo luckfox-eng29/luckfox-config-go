@@ -20,15 +20,15 @@ import (
 const defaultFBTFTCompatible = "sitronix,st7789v"
 
 // FBTFT manages an FBTFT SPI screen driver via dynamic DTS overlay.
-// Pins is the board-specific list of GPIO names that FBTFT occupies.
 type FBTFT struct {
 	deps       Deps
-	pins       []string
+	gpioPins   []string
+	spiPins    []string
 	compatible string
 }
 
-func NewFBTFT(deps Deps, pins []string) *FBTFT {
-	return &FBTFT{deps: deps, pins: pins}
+func NewFBTFT(deps Deps, gpioPins, spiPins []string) *FBTFT {
+	return &FBTFT{deps: deps, gpioPins: gpioPins, spiPins: spiPins}
 }
 
 func (f *FBTFT) ID() string { return "fbtft" }
@@ -51,14 +51,18 @@ func (f *FBTFT) ConfigKeys() []string {
 }
 
 func (f *FBTFT) Enable(ctx context.Context) error {
-	if len(f.pins) == 0 {
+	allPins := make([]string, 0, len(f.gpioPins)+len(f.spiPins))
+	allPins = append(allPins, f.gpioPins...)
+	allPins = append(allPins, f.spiPins...)
+
+	if len(allPins) == 0 {
 		return fmt.Errorf("fbtft: no pins configured for this board")
 	}
 	if f.compatible == "" {
 		f.compatible = defaultFBTFTCompatible
 	}
 
-	if err := f.deps.Diagram.CheckConflictErr(f.pins); err != nil {
+	if err := f.deps.Diagram.CheckConflictErr(allPins); err != nil {
 		return err
 	}
 
@@ -72,14 +76,18 @@ func (f *FBTFT) Enable(ctx context.Context) error {
 		return err
 	}
 
-	for _, p := range f.pins {
+	for _, p := range f.gpioPins {
 		if pin, err := board.ParseGPIO(p); err == nil {
 			_ = SetPinMode(f.deps.Chip, pin.Raw(), 0)
 		}
 		f.deps.Diagram.MarkPin(p, true)
 	}
 
-	logger.Info("FBTFT enabled", "compatible", f.compatible, "pins", f.pins)
+	for _, p := range f.spiPins {
+		f.deps.Diagram.MarkPin(p, true)
+	}
+
+	logger.Info("FBTFT enabled", "compatible", f.compatible, "gpio_pins", f.gpioPins, "spi_pins", f.spiPins)
 
 	return f.deps.Cfg.SetMulti("FBTFT", map[string]string{
 		"STATUS":     "1",
@@ -144,7 +152,10 @@ func (f *FBTFT) Disable(ctx context.Context) error {
 		return err
 	}
 
-	for _, p := range f.pins {
+	for _, p := range f.gpioPins {
+		f.deps.Diagram.MarkPin(p, false)
+	}
+	for _, p := range f.spiPins {
 		f.deps.Diagram.MarkPin(p, false)
 	}
 
@@ -164,7 +175,10 @@ func (f *FBTFT) LoadFromConfig(ctx context.Context, cfg *config.Store, apply boo
 	if apply {
 		return f.Enable(ctx)
 	}
-	for _, p := range f.pins {
+	for _, p := range f.gpioPins {
+		f.deps.Diagram.MarkPin(p, true)
+	}
+	for _, p := range f.spiPins {
 		f.deps.Diagram.MarkPin(p, true)
 	}
 	return nil
