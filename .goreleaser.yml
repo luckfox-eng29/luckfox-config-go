@@ -1,0 +1,37 @@
+version: 2
+
+project_name: luckfox-config
+
+gitlab_urls:
+  api: "{{ .Env.CI_API_V4_URL }}"
+  download: "{{ .Env.CI_SERVER_URL }}"
+
+builds:
+  - id: luckfox-config
+    main: ./cmd/luckfox-config
+    binary: luckfox-config
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+    goarch:
+      - arm
+      - arm64
+    goarm:
+      - "7"
+
+archives:
+  - id: binaries
+    format: binary
+    name_template: "{{ .ProjectName }}-{{ if eq .Arch \"arm\" }}arm{{ else }}{{ .Arch }}{{ end }}"
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  name_template: "{{ .ProjectName }} {{ .Tag }}"
+  gitlab:
+    owner: "{{ .Env.CI_PROJECT_NAMESPACE }}"
+    name: "{{ .Env.CI_PROJECT_NAME }}"

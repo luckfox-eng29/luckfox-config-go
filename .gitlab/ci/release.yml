@@ -1,0 +1,18 @@
+release_goreleaser:
+  stage: release
+  image: golang:1.24.2
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - when: never
+  variables:
+    GIT_DEPTH: "0"
+    GOPROXY: "https://goproxy.cn,direct"
+    GOSUMDB: "off"
+    GORELEASER_VERSION: "v2.8.2"
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends git
+    - git fetch --tags
+    - go install github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}
+  script:
+    - $(go env GOPATH)/bin/goreleaser release --clean

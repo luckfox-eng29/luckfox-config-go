@@ -1,6 +1,7 @@
 stages:
   - pre-check
   - build
+  - release
 
 workflow:
   rules:
@@ -12,3 +13,4 @@ workflow:
 include:
   - '.gitlab/ci/pre-check.yml'
   - '.gitlab/ci/build.yml'
+  - '.gitlab/ci/release.yml'
