@@ -36,4 +36,10 @@ var (
 			MarginTop(1)
 )
 
-const helpKeys = "↑/↓/j/k navigate • 1-9/a-z select • enter select • esc/h back • q quit"
+var helpKeys = func() string {
+	base := "↑/↓/j/k navigate • 1-9/a-z select • enter select • esc/h back • q quit"
+	if SlowTerminal() {
+		return asciiHelp(base)
+	}
+	return base
+}()

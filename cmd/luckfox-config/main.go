@@ -367,7 +367,10 @@ func runTUI(_ *cobra.Command, _ []string) error {
 		appCtx.Warnings = append(appCtx.Warnings, msg)
 	}
 
-	p := tea.NewProgram(tui.New(appCtx), tea.WithAltScreen())
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	opts = append(opts, tui.CompatOptions()...)
+
+	p := tea.NewProgram(tui.New(appCtx), opts...)
 	_, err = p.Run()
 	return err
 }
