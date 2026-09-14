@@ -45,6 +45,8 @@ func cmdGetCSIUnite() *cobra.Command {
 		Short:   "Print CSI unite mode from the boot DTB (0 = standard, 1 = 3840x2160)",
 		Example: `  luckfox-config get_csi_unite`,
 		Args:    cobra.NoArgs,
+		// RunE errors should not dump the usage block.
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			appCtx, cleanup, err := quickInit()
 			if err != nil {
@@ -82,6 +84,8 @@ func cmdSetCSIUnite() *cobra.Command {
 A reboot is required for the change to take effect.`,
 		Example: `  luckfox-config set_csi_unite 1`,
 		Args:    cobra.ExactArgs(1),
+		// RunE errors should not dump the usage block.
+		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, args []string) error {
 			var unite bool
 			switch args[0] {
