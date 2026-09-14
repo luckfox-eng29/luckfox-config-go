@@ -20,7 +20,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/charmbracelet/bubbletea"
 )
@@ -119,21 +118,12 @@ func (t *ttyESCTimeout) returnStashed(p []byte, stashed []byte) int {
 
 func (t *ttyESCTimeout) readOneByte(timeout time.Duration) []byte {
 	fd := int(t.f.Fd())
-	fdSet := [1024 / 64]uint64{}
-	fdSet[fd/64] |= 1 << (uint(fd) % 64)
-	tv := syscall.Timeval{
-		Sec:  int32(timeout / time.Second),
-		Usec: int32((timeout % time.Second) / time.Microsecond),
-	}
-	n, _, _ := syscall.Syscall6(
-		syscall.SYS_SELECT,
-		uintptr(fd+1),
-		uintptr(unsafe.Pointer(&fdSet)),
-		0, 0,
-		uintptr(unsafe.Pointer(&tv)),
-		0,
-	)
-	if n <= 0 {
+	rfds := &syscall.FdSet{}
+	rfds.Bits[fd/64] |= 1 << (uint(fd) % 64)
+	tv := syscall.NsecToTimeval(int64(timeout))
+
+	n, err := syscall.Select(fd+1, rfds, nil, nil, &tv)
+	if n <= 0 || err != nil {
 		return nil
 	}
 	var buf [1]byte
