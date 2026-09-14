@@ -408,3 +408,141 @@ func supportsDDStatusProgress() bool {
 	}
 	return strings.Contains(string(out), "status=progress")
 }
+
+// DDBackup performs a raw dd backup of a partition without filesystem.
+// This is typically used for uboot and boot partitions.
+func DDBackup(partitionPath string, media MediaClass, progressChan chan<- Progress) error {
+	defer close(progressChan)
+
+	progressChan <- Progress{Percentage: 1, Message: "Checking partition..."}
+
+	// Validate partition exists
+	if _, err := os.Stat(partitionPath); os.IsNotExist(err) {
+		return fmt.Errorf("partition not found: %s", partitionPath)
+	}
+
+	// Get partition size (using blockdev for block devices)
+	sizeOut, err := exec.Command("blockdev", "--getsize64", partitionPath).Output()
+	if err != nil {
+		return fmt.Errorf("failed to get partition size: %w", err)
+	}
+	var partSize int64
+	fmt.Sscanf(strings.TrimSpace(string(sizeOut)), "%d", &partSize)
+
+	progressChan <- Progress{Percentage: 5, Message: "Checking dependencies..."}
+
+	// Determine output path based on media
+	var outputDir string
+	var availableSpaceKB int64
+
+	switch media {
+	case Local:
+		outputDir = "/mnt"
+		availableSpaceKB, err = getAvailableSpace("/mnt")
+		if err != nil {
+			return fmt.Errorf("get available space: %w", err)
+		}
+	case USBDisk:
+		if !isMounted("/mnt/udisk") {
+			return fmt.Errorf("USB disk is not mounted at /mnt/udisk")
+		}
+		outputDir = "/mnt/udisk"
+		availableSpaceKB, err = getAvailableSpace("/mnt/udisk")
+		if err != nil {
+			return fmt.Errorf("get available space: %w", err)
+		}
+	case SDCard:
+		if !isMounted("/mnt/sdcard") {
+			return fmt.Errorf("SD card is not mounted at /mnt/sdcard")
+		}
+		outputDir = "/mnt/sdcard"
+		availableSpaceKB, err = getAvailableSpace("/mnt/sdcard")
+		if err != nil {
+			return fmt.Errorf("get available space: %w", err)
+		}
+	default:
+		return fmt.Errorf("invalid media class")
+	}
+
+	// Extract partition name for filename
+	partName := filepath.Base(partitionPath)
+	outputPath := filepath.Join(outputDir, fmt.Sprintf("backup_%s.img", partName))
+
+	// Check available space (need at least partition size + 10% margin)
+	requiredKB := partSize/1024 + partSize/1024/10
+	if availableSpaceKB < requiredKB {
+		return fmt.Errorf("not enough space (required: %d MB, available: %d MB)", requiredKB/1024, availableSpaceKB/1024)
+	}
+
+	progressChan <- Progress{Percentage: 10, Message: fmt.Sprintf("Starting dd backup of %s...", partName)}
+
+	// Remove existing backup file if present
+	if _, err := os.Stat(outputPath); err == nil {
+		os.Remove(outputPath)
+	}
+
+	// Use dd to backup
+	ddSupportsProgress := supportsDDStatusProgress()
+	ddArgs := []string{"if=" + partitionPath, "of=" + outputPath, "bs=1M", "conv=fsync"}
+	if ddSupportsProgress {
+		ddArgs = append(ddArgs, "status=progress")
+	}
+
+	ddCmd := exec.Command("dd", ddArgs...)
+	stderr, _ := ddCmd.StderrPipe()
+	if startErr := ddCmd.Start(); startErr != nil {
+		return fmt.Errorf("dd start: %w", startErr)
+	}
+
+	var ddStderrMu sync.Mutex
+	var ddStderr bytes.Buffer
+	ddReadDone := make(chan struct{})
+
+	// Read dd progress
+	go func() {
+		defer close(ddReadDone)
+		buf := make([]byte, 1024)
+		for {
+			n, readErr := stderr.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				line := string(chunk)
+
+				ddStderrMu.Lock()
+				appendTail(&ddStderr, chunk, 8192)
+				ddStderrMu.Unlock()
+
+				parts := strings.Split(line, "\r")
+				lastPart := strings.TrimSpace(parts[len(parts)-1])
+				if lastPart != "" {
+					progressChan <- Progress{Percentage: 10, Message: "dd: " + lastPart}
+				}
+			}
+			if readErr != nil {
+				break
+			}
+		}
+	}()
+
+	err = ddCmd.Wait()
+	<-ddReadDone
+	if err != nil {
+		ddStderrMu.Lock()
+		stderrText := strings.TrimSpace(ddStderr.String())
+		ddStderrMu.Unlock()
+
+		os.Remove(outputPath) // Clean up partial file
+		if stderrText != "" {
+			logger.Error("dd backup failed", "error", err, "stderr", stderrText)
+			return fmt.Errorf("dd backup failed: %w\n%s", err, stderrText)
+		}
+		logger.Error("dd backup failed", "error", err)
+		return fmt.Errorf("dd backup failed: %w", err)
+	}
+
+	progressChan <- Progress{Percentage: 95, Message: "Syncing..."}
+	exec.Command("sync").Run()
+
+	progressChan <- Progress{Percentage: 100, Message: fmt.Sprintf("Backup completed: %s", outputPath)}
+	return nil
+}
