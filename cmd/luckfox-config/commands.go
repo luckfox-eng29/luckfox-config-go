@@ -29,8 +29,91 @@ func registerPeripheralCommands(root *cobra.Command) {
 		cmdI2C(),
 		cmdSPI(),
 		cmdCAN(),
+		cmdGetCSIUnite(),
+		cmdSetCSIUnite(),
 		cmdBackup(),
 	)
+}
+
+// ─── CSI ──────────────────────────────────────────────────────────────────────
+
+// cmdGetCSIUnite reports the CSI unite mode stored in the boot partition DTB.
+// Kept top-level for compatibility with the legacy shell subcommand.
+func cmdGetCSIUnite() *cobra.Command {
+	return &cobra.Command{
+		Use:     "get_csi_unite",
+		Short:   "Print CSI unite mode from the boot DTB (0 = standard, 1 = 3840x2160)",
+		Example: `  luckfox-config get_csi_unite`,
+		Args:    cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			appCtx, cleanup, err := quickInit()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			p, err := appCtx.Registry.Get("csi")
+			if err != nil {
+				return fmt.Errorf("CSI is not supported on this board")
+			}
+
+			unite, err := p.(*peripheral.CSI).UniteEnabled()
+			if err != nil {
+				return err
+			}
+			fmt.Println(unite)
+			return nil
+		},
+	}
+}
+
+// cmdSetCSIUnite writes the CSI unite mode into the boot partition DTB and
+// enables CSI. A reboot is required for the change to take effect.
+// Kept top-level for compatibility with the legacy shell subcommand.
+func cmdSetCSIUnite() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set_csi_unite <0|1>",
+		Short: "Set CSI unite mode in the boot DTB (0 = standard, 1 = 3840x2160)",
+		Long: `Set CSI unite mode in the boot partition DTB and enable CSI.
+
+  0  standard mode
+  1  unite mode (3840x2160)
+
+A reboot is required for the change to take effect.`,
+		Example: `  luckfox-config set_csi_unite 1`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var unite bool
+			switch args[0] {
+			case "0":
+				unite = false
+			case "1":
+				unite = true
+			default:
+				return fmt.Errorf("value must be 0 or 1, got %q", args[0])
+			}
+
+			appCtx, cleanup, err := quickInit()
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			p, err := appCtx.Registry.Get("csi")
+			if err != nil {
+				return fmt.Errorf("CSI is not supported on this board")
+			}
+
+			csi := p.(*peripheral.CSI)
+			csi.SetUnite(unite)
+			if err := csi.Enable(context.Background()); err != nil {
+				return err
+			}
+
+			fmt.Printf("CSI unite set to %s. Reboot required.\n", args[0])
+			return nil
+		},
+	}
 }
 
 // ─── Backup ───────────────────────────────────────────────────────────────────

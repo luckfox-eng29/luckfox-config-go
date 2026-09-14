@@ -9,10 +9,15 @@ package peripheral
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"luckfox-config/internal/config"
 	"luckfox-config/internal/logger"
 )
+
+// csiUniteNode is the device tree node holding the CSI unite property.
+const csiUniteNode = "/rkisp@ffa00000"
 
 func boolToStr(b bool) string {
 	if b {
@@ -102,6 +107,28 @@ func (c *CSI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool)
 
 func (c *CSI) SetUnite(unite bool) {
 	c.deps.Cfg.Set("CSI", "UNITE", boolToStr(unite))
+}
+
+// UniteEnabled reads rockchip,unite from the boot partition device tree.
+// It returns 1 when unite is enabled, 0 when the property is absent, matching
+// the legacy get_csi_unite subcommand of the shell implementation.
+func (c *CSI) UniteEnabled() (int, error) {
+	if c.deps.Static == nil {
+		return 0, fmt.Errorf("static overlay not available")
+	}
+
+	raw, err := c.deps.Static.GetProperty(csiUniteNode, "rockchip,unite")
+	if err != nil {
+		// Missing property means unite is disabled.
+		logger.Debug("rockchip,unite not found, assuming disabled", "node", csiUniteNode, "error", err)
+		return 0, nil
+	}
+
+	v, err := strconv.ParseInt(strings.TrimSpace(raw), 0, 32)
+	if err != nil {
+		return 0, fmt.Errorf("parse rockchip,unite %q: %w", raw, err)
+	}
+	return int(v), nil
 }
 
 var _ Peripheral = (*CSI)(nil)
