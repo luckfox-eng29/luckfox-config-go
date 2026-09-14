@@ -12,7 +12,7 @@
     "has_4g_module": false,
     "has_fbtft": false,
     "has_usb": true,
-    "has_csi": false,
+    "has_csi": true,
     "has_rgb": false,
     "has_sdmmc": false
   },
