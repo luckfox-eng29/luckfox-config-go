@@ -19,28 +19,40 @@ import (
 
 // DSIPanel holds timing and init data for a single MIPI DSI panel.
 type DSIPanel struct {
-	ID             string `json:"id"`
-	DisplayName    string `json:"display_name"`
-	Lanes          int    `json:"lanes"`
-	Format         *int   `json:"format,omitempty"`
-	ModeFlags      *int   `json:"mode_flags,omitempty"`
-	ClockFrequency int    `json:"clock_frequency"`
-	HActive        int    `json:"hactive"`
-	VActive        int    `json:"vactive"`
-	VSyncLen       int    `json:"vsync_len"`
-	VBackPorch     int    `json:"vback_porch"`
-	VFrontPorch    int    `json:"vfront_porch"`
-	HSyncLen       int    `json:"hsync_len"`
-	HBackPorch     int    `json:"hback_porch"`
-	HFrontPorch    int    `json:"hfront_porch"`
-	VSyncActive    int    `json:"vsync_active"`
-	HSyncActive    int    `json:"hsync_active"`
-	DEActive       int    `json:"de_active"`
-	PixelClkActive int    `json:"pixelclk_active"`
-	WidthMM        int    `json:"width_mm,omitempty"`
-	HeightMM       int    `json:"height_mm,omitempty"`
-	PanelInitSeq   string `json:"panel_init_sequence,omitempty"`
-	PanelExitSeq   string `json:"panel_exit_sequence,omitempty"`
+	ID             string      `json:"id"`
+	DisplayName    string      `json:"display_name"`
+	Lanes          int         `json:"lanes"`
+	Format         *int        `json:"format,omitempty"`
+	ModeFlags      *int        `json:"mode_flags,omitempty"`
+	ClockFrequency int         `json:"clock_frequency"`
+	HActive        int         `json:"hactive"`
+	VActive        int         `json:"vactive"`
+	VSyncLen       int         `json:"vsync_len"`
+	VBackPorch     int         `json:"vback_porch"`
+	VFrontPorch    int         `json:"vfront_porch"`
+	HSyncLen       int         `json:"hsync_len"`
+	HBackPorch     int         `json:"hback_porch"`
+	HFrontPorch    int         `json:"hfront_porch"`
+	VSyncActive    int         `json:"vsync_active"`
+	HSyncActive    int         `json:"hsync_active"`
+	DEActive       int         `json:"de_active"`
+	PixelClkActive int         `json:"pixelclk_active"`
+	WidthMM        int         `json:"width_mm,omitempty"`
+	HeightMM       int         `json:"height_mm,omitempty"`
+	PanelInitSeq   string      `json:"panel_init_sequence,omitempty"`
+	PanelExitSeq   string      `json:"panel_exit_sequence,omitempty"`
+	Touch          *PanelTouch `json:"touch,omitempty"`
+}
+
+// PanelTouch carries the touch controller geometry of a panel. Selecting the
+// panel writes these properties onto the touch node of the board; properties
+// that are not set are left out (the driver then uses its defaults).
+type PanelTouch struct {
+	SizeX     int  `json:"size_x,omitempty"`
+	SizeY     int  `json:"size_y,omitempty"`
+	InvertedX bool `json:"inverted_x,omitempty"`
+	InvertedY bool `json:"inverted_y,omitempty"`
+	SwappedXY bool `json:"swapped_x_y,omitempty"`
 }
 
 // DSIPanelFamily groups panels of the same connector type.
@@ -92,15 +104,27 @@ func FindPanel(families []DSIPanelFamily, family, id string) (*DSIPanel, error) 
 // defaultDSIModeFlags is the default MIPI DSI mode flag bitmask (VSYNC/HSYNC active-high, DE active-high, burst mode).
 const defaultDSIModeFlags = 0x4b
 
+// touchProps are the device tree properties that describe the touch geometry of
+// a panel. They are cleared before a newly selected panel's values are written,
+// because fdtoverlay cannot remove the values of the previous panel.
+var touchProps = []string{
+	"touchscreen-size-x",
+	"touchscreen-size-y",
+	"touchscreen-inverted-x",
+	"touchscreen-inverted-y",
+	"touchscreen-swapped-x-y",
+}
+
 // DSI manages MIPI DSI display configuration via static FDT overlay.
 type DSI struct {
-	deps     Deps
-	fdtNode  string // e.g. "/dsi@ff640000"
-	families []DSIPanelFamily
+	deps      Deps
+	fdtNode   string // e.g. "/dsi@ff640000"
+	touchNode string // touch controller node, empty when the board has none
+	families  []DSIPanelFamily
 }
 
 func NewDSI(deps Deps, fdtNode string, families []DSIPanelFamily) *DSI {
-	return &DSI{deps: deps, fdtNode: fdtNode, families: families}
+	return &DSI{deps: deps, fdtNode: fdtNode, touchNode: deps.Touch.Node, families: families}
 }
 
 func (d *DSI) ID() string { return "dsi" }
@@ -160,10 +184,71 @@ func (d *DSI) Apply(ctx context.Context, family, id string) error {
 		return err
 	}
 
+	// fdtoverlay can only add or override properties, so a sequence left behind
+	// by a previously selected panel survives the overlay and keeps running on
+	// the new panel. Drop it explicitly when the panel defines none.
+	var drop []string
+	if panel.PanelInitSeq == "" {
+		drop = append(drop, "panel-init-sequence")
+	}
+	if panel.PanelExitSeq == "" {
+		drop = append(drop, "panel-exit-sequence")
+	}
+	if len(drop) > 0 {
+		if err := d.deps.Static.DeleteProperties(drop...); err != nil {
+			return err
+		}
+	}
+
+	if err := d.applyTouch(panel); err != nil {
+		return err
+	}
+
 	return d.deps.Cfg.SetMulti("DSI", map[string]string{
 		"TYPE": family,
 		"SIZE": id,
 	})
+}
+
+// applyTouch writes the touch geometry of the selected panel onto the touch
+// node of the board. The properties of the previously selected panel are
+// dropped first, so switching to a panel without geometry does not leave stale
+// values behind.
+func (d *DSI) applyTouch(p *DSIPanel) error {
+	if d.touchNode == "" {
+		return nil
+	}
+	if err := d.deps.Static.DeleteProperties(touchProps...); err != nil {
+		return err
+	}
+	if p.Touch == nil || !p.Touch.hasValues() {
+		return nil
+	}
+
+	dts := fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n", d.touchNode)
+	if p.Touch.SizeX > 0 {
+		dts += fmt.Sprintf("\ttouchscreen-size-x = <%d>;\n", p.Touch.SizeX)
+	}
+	if p.Touch.SizeY > 0 {
+		dts += fmt.Sprintf("\ttouchscreen-size-y = <%d>;\n", p.Touch.SizeY)
+	}
+	if p.Touch.InvertedX {
+		dts += "\ttouchscreen-inverted-x;\n"
+	}
+	if p.Touch.InvertedY {
+		dts += "\ttouchscreen-inverted-y;\n"
+	}
+	if p.Touch.SwappedXY {
+		dts += "\ttouchscreen-swapped-x-y;\n"
+	}
+	dts += "};\n"
+
+	return d.deps.Static.Apply(dts)
+}
+
+// hasValues reports whether the panel carries any touch geometry at all.
+func (t PanelTouch) hasValues() bool {
+	return t.SizeX > 0 || t.SizeY > 0 || t.InvertedX || t.InvertedY || t.SwappedXY
 }
 
 // GetResolution returns the configured panel resolution from the device tree.
