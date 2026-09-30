@@ -156,6 +156,9 @@ func (m *backupMenu) updateMediaSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Start backup
 		m.backingUp = true
+		// Leave the media screen: View() renders it first, so without this the
+		// progress and result are never shown and the keys stay blocked forever.
+		m.needMedia = false
 		m.err = nil
 		m.progress = backup.Progress{Percentage: 0, Message: "Initializing..."}
 		m.progressChan = make(chan backup.Progress)
