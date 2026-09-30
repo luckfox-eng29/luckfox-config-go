@@ -28,6 +28,7 @@ type backupMenu struct {
 	err          error
 	selectedPart *backup.BackupOption
 	needMedia    bool // Whether we need to ask for media selection
+	notice       string
 }
 
 func newBackupMenu(appCtx *AppContext) *backupMenu {
@@ -87,6 +88,9 @@ func (m *backupMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *backupMenu) updatePartitionSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Any key dismisses a previously shown notice.
+	m.notice = ""
+
 	switch msg.String() {
 	case "up", "k":
 		if m.cursor > 0 {
@@ -106,7 +110,12 @@ func (m *backupMenu) updatePartitionSelection(msg tea.KeyMsg) (tea.Model, tea.Cm
 
 		opt := m.options[m.cursor]
 		if opt.BackupType == backup.BackupTypeUnsupported {
-			// Can't backup unsupported partitions
+			// Can't backup unsupported partitions. Say why instead of silently
+			// ignoring the key press.
+			m.notice = opt.DisplayLabel + " cannot be backed up"
+			if opt.Reason != "" {
+				m.notice += ": " + opt.Reason
+			}
 			return m, nil
 		}
 
@@ -217,6 +226,11 @@ func (m *backupMenu) View() string {
 			sb.WriteString("\n\n")
 		} else if m.progress.Percentage == 100 {
 			sb.WriteString(successStyle.Render("✓ Backup successful!"))
+			sb.WriteString("\n\n")
+		}
+
+		if m.notice != "" {
+			sb.WriteString(errorStyle.Render("✗ " + m.notice))
 			sb.WriteString("\n\n")
 		}
 

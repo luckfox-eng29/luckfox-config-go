@@ -379,6 +379,32 @@ func isMounted(path string) bool {
 	return false
 }
 
+// partitionSizeBytes returns the size of a block device in bytes.
+//
+// The kernel already knows the size, so it is read from sysfs instead of
+// shelling out to "blockdev": that tool is missing on many embedded images and
+// BusyBox does not provide it at all.
+func partitionSizeBytes(path string) (int64, error) {
+	// Resolve symlinks so aliases such as /dev/disk/by-partlabel/rootfs end up as
+	// the kernel name (mmcblk0p3) that sysfs is indexed by.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	data, err := os.ReadFile(filepath.Join("/sys/class/block", filepath.Base(path), "size"))
+	if err != nil {
+		return 0, err
+	}
+
+	// The sysfs attribute holds the size in 512 byte sectors.
+	sectors, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return sectors * 512, nil
+}
+
 func appendTail(dst *bytes.Buffer, chunk []byte, maxBytes int) {
 	if len(chunk) >= maxBytes {
 		dst.Reset()
@@ -421,13 +447,11 @@ func DDBackup(partitionPath string, media MediaClass, progressChan chan<- Progre
 		return fmt.Errorf("partition not found: %s", partitionPath)
 	}
 
-	// Get partition size (using blockdev for block devices)
-	sizeOut, err := exec.Command("blockdev", "--getsize64", partitionPath).Output()
+	// Get partition size
+	partSize, err := partitionSizeBytes(partitionPath)
 	if err != nil {
 		return fmt.Errorf("failed to get partition size: %w", err)
 	}
-	var partSize int64
-	fmt.Sscanf(strings.TrimSpace(string(sizeOut)), "%d", &partSize)
 
 	progressChan <- Progress{Percentage: 5, Message: "Checking dependencies..."}
 
