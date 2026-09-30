@@ -9,6 +9,7 @@ package board
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,62 @@ type GPIOPin struct {
 var groupOffset = map[string]int{"A": 0, "B": 8, "C": 16, "D": 24}
 
 var gpioRe = regexp.MustCompile(`^GPIO(\d+)_([A-D])(\d+)$`)
+
+var (
+	rmioNameRe = regexp.MustCompile(`RM_IO\d+`)
+	gpioNameRe = regexp.MustCompile(`GPIO\d+_[A-D]\d+`)
+)
+
+// DiagramPins extracts the directly addressable pin names from an ASCII pin
+// diagram: RM_IO indices on boards that expose RM_IO, GPIOx_Yy names on boards
+// that address pins directly. Duplicates are removed and the result is sorted
+// by pin position.
+func DiagramPins(diagram []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(name string) {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	for _, line := range diagram {
+		for _, name := range rmioNameRe.FindAllString(line, -1) {
+			add(name)
+		}
+		for _, name := range gpioNameRe.FindAllString(line, -1) {
+			add(name)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return pinNameLess(out[i], out[j]) })
+	return out
+}
+
+// pinNameLess orders RM_IO names before GPIO names, by index / bank position.
+func pinNameLess(a, b string) bool {
+	aRMIO := strings.HasPrefix(a, "RM_IO")
+	bRMIO := strings.HasPrefix(b, "RM_IO")
+	if aRMIO != bRMIO {
+		return aRMIO
+	}
+	if aRMIO {
+		an, _ := strconv.Atoi(strings.TrimPrefix(a, "RM_IO"))
+		bn, _ := strconv.Atoi(strings.TrimPrefix(b, "RM_IO"))
+		return an < bn
+	}
+	ap, errA := ParseGPIO(a)
+	bp, errB := ParseGPIO(b)
+	if errA != nil || errB != nil {
+		return a < b
+	}
+	if ap.Bank != bp.Bank {
+		return ap.Bank < bp.Bank
+	}
+	if ap.Group != bp.Group {
+		return ap.Group < bp.Group
+	}
+	return ap.Number < bp.Number
+}
 
 // ParseGPIO parses a string like "GPIO0_A3" into a GPIOPin.
 func ParseGPIO(s string) (GPIOPin, error) {

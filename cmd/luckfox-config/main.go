@@ -60,6 +60,7 @@ func main() {
 	registerPeripheralCommands(root)
 
 	root.AddCommand(
+		newGPIOCommand(),
 		&cobra.Command{
 			Use:   "load",
 			Short: "Apply saved configuration (run at boot)",
@@ -338,6 +339,21 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 	// SDMMC
 	if bc.Features.HasSDMMC {
 		reg.Register(peripheral.NewSDMMC(deps))
+	}
+
+	// GPIO pins exposed by the board pin diagram. Every pin is registered so
+	// it can be claimed from the GPIO menu; nothing is applied until the user
+	// enables a pin and its config key says STATUS=1.
+	for _, name := range board.DiagramPins(bc.PinDiagram) {
+		if rmio, err := board.ParseRMIO(name); err == nil {
+			reg.Register(peripheral.NewGPIO(rmio, deps))
+			continue
+		}
+		g, err := peripheral.NewGPIOByName(name, deps)
+		if err != nil {
+			continue
+		}
+		reg.Register(g)
 	}
 
 	return reg
