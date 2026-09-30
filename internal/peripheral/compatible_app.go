@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 
+	"luckfox-config/internal/board"
 	"luckfox-config/internal/config"
 	"luckfox-config/internal/logger"
 )
@@ -180,6 +181,9 @@ func (c *CompatibleApp) enablePicoLCD() error {
 	if err := c.applyUART(3, 1, false); err != nil {
 		return err
 	}
+	// Pins that need an internal pull-up on this board (from the shell script
+	// `luckfox_gpio_app <bank> <group> <num> up` calls).
+	var pullUps []string
 	switch c.boardID {
 	case "pico_pro_max":
 		if err := c.applyUART(1, 1, false); err != nil {
@@ -187,6 +191,10 @@ func (c *CompatibleApp) enablePicoLCD() error {
 		}
 		if err := c.applyI2C(4, 0, defaultI2CSpeed, false); err != nil {
 			return err
+		}
+		pullUps = []string{
+			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
+			"GPIO2_A4", "GPIO2_A5", "GPIO2_A0", "GPIO2_A2",
 		}
 	case "pico_plus":
 		if err := c.applyPWM(9, 0, false); err != nil {
@@ -198,10 +206,20 @@ func (c *CompatibleApp) enablePicoLCD() error {
 		if err := c.applyUART(5, 0, false); err != nil {
 			return err
 		}
+		pullUps = []string{
+			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
+			"GPIO3_A6", "GPIO3_A7", "GPIO3_A5", "GPIO3_A2",
+		}
 	case "pico":
-		// no extra steps
+		pullUps = []string{
+			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
+			"GPIO4_B1", "GPIO4_B0", "GPIO4_A6", "GPIO4_A3",
+		}
 	}
-	return c.applySPI(0, 0, true, false, true)
+	if err := c.applySPI(0, 0, true, false, true); err != nil {
+		return err
+	}
+	return c.applyPullUps(pullUps...)
 }
 
 func (c *CompatibleApp) enablePicoResTouchLCD() error {
@@ -218,6 +236,7 @@ func (c *CompatibleApp) enablePicoResTouchLCD() error {
 	if err := c.applySPI(0, 0, false, true, true); err != nil {
 		return err
 	}
+	var pullUps []string
 	switch c.boardID {
 	case "pico_pro_max":
 		if err := c.applyUART(1, 1, false); err != nil {
@@ -229,12 +248,30 @@ func (c *CompatibleApp) enablePicoResTouchLCD() error {
 		if err := c.applyI2C(3, 0, defaultI2CSpeed, false); err != nil {
 			return err
 		}
+		pullUps = []string{"GPIO1_D1", "GPIO2_A5"}
 	case "pico_plus":
 		if err := c.applyUART(5, 0, false); err != nil {
 			return err
 		}
 		if err := c.applyI2C(0, 2, defaultI2CSpeed, true); err != nil {
 			return err
+		}
+		pullUps = []string{"GPIO1_D1", "GPIO3_A7"}
+	}
+	return c.applyPullUps(pullUps...)
+}
+
+// applyPullUps enables the internal pull-up on the given GPIO pins, mirroring
+// the `luckfox_gpio_app <bank> <group> <num> up` calls of the shell scripts.
+// Pins that do not exist on the current board must not be listed by callers.
+func (c *CompatibleApp) applyPullUps(pins ...string) error {
+	for _, name := range pins {
+		pin, err := board.ParseGPIO(name)
+		if err != nil {
+			return fmt.Errorf("pull-up %s: %w", name, err)
+		}
+		if err := SetPull(c.deps.Chip, pin.Raw(), PullUp); err != nil {
+			return fmt.Errorf("pull-up %s: %w", name, err)
 		}
 	}
 	return nil
