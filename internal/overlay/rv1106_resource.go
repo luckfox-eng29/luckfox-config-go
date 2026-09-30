@@ -23,6 +23,11 @@ type RV1106Resource struct {
 	device string
 	header []byte // 2048 bytes
 	dtb    []byte
+
+	// data-position of the fdt and kernel images inside the /images node of the
+	// header, used to detect a DTB that grew into the kernel image.
+	fdtPosition    uint32
+	kernelPosition uint32
 }
 
 // OpenRV1106Resource opens the boot partition and reads the FDT structure for RV1106.
@@ -46,6 +51,16 @@ func OpenRV1106Resource(device string) (*RV1106Resource, error) {
 	if err := os.WriteFile(tmpHdr, r.header, 0o644); err != nil {
 		return nil, fmt.Errorf("write tmp header: %w", err)
 	}
+
+	// Image positions are needed later to make sure a grown DTB does not
+	// overwrite the kernel image.
+	if r.fdtPosition, err = fdtGetUint32(tmpHdr, "/images/fdt", "data-position"); err != nil {
+		return nil, fmt.Errorf("read fdt position: %w", err)
+	}
+	if r.kernelPosition, err = fdtGetUint32(tmpHdr, "/images/kernel", "data-position"); err != nil {
+		return nil, fmt.Errorf("read kernel position: %w", err)
+	}
+
 	out, err := exec.Command("fdtget", tmpHdr, "/images/fdt", "data-size").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("fdtget data-size: %w\n%s", err, out)
@@ -79,6 +94,14 @@ func (r *RV1106Resource) SetDTB(dtb []byte) {
 
 // Flush updates the header with new size/hash and writes both to disk.
 func (r *RV1106Resource) Flush() error {
+	// The DTB is written right after the 2048-byte header. Abort instead of
+	// silently overwriting the kernel image that follows it in the partition.
+	if gap := int(r.kernelPosition) - int(r.fdtPosition); len(r.dtb) > gap {
+		return fmt.Errorf("new DTB is %d bytes but only %d bytes are available before the kernel image "+
+			"(fdt at 0x%x, kernel at 0x%x); boot partition left unchanged — reduce the applied overlays",
+			len(r.dtb), gap, r.fdtPosition, r.kernelPosition)
+	}
+
 	// 1. Calculate SHA256 of new DTB
 	hash := sha256.Sum256(r.dtb)
 	var sb strings.Builder
