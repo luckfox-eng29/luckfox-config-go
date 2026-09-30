@@ -134,6 +134,60 @@ func (s *StaticOverlay) Delete(pattern string) error {
 	return s.Resource.Flush()
 }
 
+// DeleteProperty removes a property from the DTB, then flushes.
+// Equivalent to running luckfox_fdt_delete() on the DTB file.
+//
+// Overlay application (fdtoverlay) can only add or override properties, so a
+// property written by a previously applied overlay has to be removed by hand.
+// Multi-line values are handled: every continuation line of the value is
+// dropped together with the property line. Missing properties are ignored.
+func (s *StaticOverlay) DeleteProperty(prop string) error {
+	return s.DeleteProperties(prop)
+}
+
+// DeleteProperties removes several properties in a single decompile/compile
+// pass, then flushes once. Requesting a property that is not present is not an
+// error; when none of them exist the DTB is left untouched.
+func (s *StaticOverlay) DeleteProperties(props ...string) error {
+	dtsFile := s.TempDir + "/.fdt_dump.dts"
+
+	if err := s.writeTempDTB(); err != nil {
+		return err
+	}
+
+	// DTB → DTS
+	out, err := exec.Command("dtc", "-I", "dtb", "-O", "dts", s.dtbFile(), "-o", dtsFile).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("dtc decompile: %w\n%s", err, out)
+	}
+
+	removed := 0
+	for _, prop := range props {
+		n, err := deletePropertyLines(dtsFile, prop)
+		if err != nil {
+			return err
+		}
+		removed += n
+	}
+	if removed == 0 {
+		// Nothing to delete, the DTB is already in the wanted state.
+		return nil
+	}
+
+	// DTS → DTB
+	out, err = exec.Command("dtc", "-I", "dts", "-O", "dtb", dtsFile, "-o", s.dtbFile()).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("dtc recompile: %w\n%s", err, out)
+	}
+
+	newDTB, err := os.ReadFile(s.dtbFile())
+	if err != nil {
+		return fmt.Errorf("read DTB: %w", err)
+	}
+	s.Resource.SetDTB(newDTB)
+	return s.Resource.Flush()
+}
+
 // DumpDTS returns the DTS text of the current DTB (for reading properties).
 func (s *StaticOverlay) DumpDTS() (string, error) {
 	if err := s.writeTempDTB(); err != nil {
@@ -267,6 +321,62 @@ func (s *StaticOverlay) GetPhandle(nodeName string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("phandle for %s not found", nodeName)
+}
+
+// deletePropertyLines removes every occurrence of prop from a decompiled DTS
+// file and reports how many occurrences were dropped.
+func deletePropertyLines(path, prop string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	kept := make([]string, 0, len(lines))
+	removed := 0
+
+	for i := 0; i < len(lines); i++ {
+		if !isPropertyLine(lines[i], prop) {
+			kept = append(kept, lines[i])
+			continue
+		}
+
+		removed++
+		// A multi-line value (e.g. a long hex byte array) continues on the
+		// following lines until the value is terminated by a semicolon.
+		for !strings.Contains(lines[i], ";") && i+1 < len(lines) {
+			i++
+		}
+	}
+
+	if removed == 0 {
+		return 0, nil
+	}
+
+	joined := strings.Join(kept, "\n")
+	if !strings.HasSuffix(joined, "\n") {
+		joined += "\n"
+	}
+	return removed, os.WriteFile(path, []byte(joined), 0o644)
+}
+
+// isPropertyLine reports whether a decompiled DTS line assigns the given
+// property (either "prop = <value>;" or the boolean form "prop;").
+func isPropertyLine(line, prop string) bool {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, prop) {
+		return false
+	}
+	rest := trimmed[len(prop):]
+	if rest == "" {
+		return false
+	}
+	switch rest[0] {
+	case '=', ';', ' ', '\t':
+		return true
+	default:
+		return false
+	}
 }
 
 func deleteLinesContaining(path, pattern string) error {
