@@ -11,7 +11,8 @@
   },
   "features": {
     "has_4g_module": false,
-    "dsi_fdt_node": "/dsi@ff640000"
+    "dsi_fdt_node": "/dsi@ff640000",
+    "touch": { "node": "/i2c@ff060000/gt911@14" }
   },
   "reserved_pins": [],
   "pin_diagram": [

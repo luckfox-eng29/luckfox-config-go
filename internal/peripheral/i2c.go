@@ -68,6 +68,10 @@ func (c *I2C) ConfigKeys() []string {
 }
 
 func (c *I2C) Enable(ctx context.Context) error {
+	if err := c.checkTouchscreen(); err != nil {
+		return err
+	}
+
 	if strings.ToLower(c.deps.ConfigMode) == "rmio" {
 		if c.sdaPin < 0 || c.sclPin < 0 {
 			return fmt.Errorf("i2c%d: SDA and SCL pins must be set before enabling", c.num)
@@ -148,6 +152,34 @@ func (c *I2C) Enable(ctx context.Context) error {
 		"STATUS": "1",
 		"SPEED":  strconv.Itoa(c.speed),
 	})
+}
+
+// checkTouchscreen handles the bus a touch controller sits on: enabling that
+// I2C bus is refused while the touchscreen is configured, and the controller
+// node is disabled while the bus is used as a plain I2C interface (same as the
+// shell script's luckfox_check_i2c).
+func (c *I2C) checkTouchscreen() error {
+	if c.deps.Touch.BusNumber == 0 || c.num != c.deps.Touch.BusNumber {
+		return nil
+	}
+	if c.deps.Cfg.Get("TS", "ENABLE") == "1" {
+		return fmt.Errorf("touchscreen is enabled, disable it before configuring I2C%d", c.num)
+	}
+	if c.deps.Touch.Node == "" || c.deps.Dynamic == nil {
+		return nil
+	}
+
+	dts := fmt.Sprintf(`/dts-v1/;
+/plugin/;
+
+&{%s} {
+	status = "disabled";
+};
+`, c.deps.Touch.Node)
+	if err := c.deps.Dynamic.Apply("TouchScreen_I2C", dts); err != nil {
+		return fmt.Errorf("disable touchscreen node: %w", err)
+	}
+	return nil
 }
 
 func (c *I2C) Disable(ctx context.Context) error {

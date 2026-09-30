@@ -230,6 +230,9 @@ func newMainMenu(appCtx *AppContext) ListMenuModel {
 			}
 			items = append(items, MenuItem{Label: label, Value: "dsi"})
 		}
+		if appCtx.Board.Features.Touch.Bus != "" {
+			addWithCheck("TouchScreen", "ts", "touchscreen")
+		}
 		if appCtx.Board.Features.Has4GModule {
 			label := "LTE Module (4G)"
 			if p, err := appCtx.Registry.Get("module_4g"); err == nil && p.IsActive() {
@@ -270,6 +273,8 @@ func newMainMenu(appCtx *AppContext) ListMenuModel {
 			return NavigatePush(newAdvancedMenu(appCtx))
 		case "dsi":
 			return NavigatePush(newDSIMenu(appCtx))
+		case "ts":
+			return NavigatePush(newTouchMenu(appCtx))
 		case "4g":
 			return NavigatePush(newModule4GMenu(appCtx))
 		case "apps":

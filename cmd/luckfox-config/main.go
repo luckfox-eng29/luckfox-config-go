@@ -161,6 +161,7 @@ func initAppContext(bc *board.BoardConfig, cfgPath string) (*tui.AppContext, err
 		ConfigMode:    bc.ConfigMode,
 		PinctrlNaming: bc.PinctrlNaming,
 		SplitSPI:      bc.SplitSPI,
+		Touch:         bc.Features.Touch,
 	}
 
 	panels, err := peripheral.LoadPanelFamilies(embedcfg.FS, "panels")
@@ -298,6 +299,11 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 
 	// DSI
 	reg.Register(peripheral.NewDSI(deps, bc.Features.DSIFDTNode, panels))
+
+	// TouchScreen (standalone GT911 switch, e.g. RV1106 Pico Ultra)
+	if bc.Features.Touch.Node != "" && bc.Features.Touch.Bus != "" {
+		reg.Register(peripheral.NewTouchscreen(deps))
+	}
 
 	// 4G Module (Lyra Pi only)
 	if bc.Features.Has4GModule {

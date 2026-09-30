@@ -53,14 +53,32 @@ type BoardConfig struct {
 }
 
 type BoardFeatures struct {
-	Has4GModule bool     `json:"has_4g_module"`
-	DSIFDTNode  string   `json:"dsi_fdt_node"`
-	RGBPins     []string `json:"rgb_pins"`
-	HasFBTFT    bool     `json:"has_fbtft"`
-	HasUSB      bool     `json:"has_usb"`
-	HasCSI      bool     `json:"has_csi"`
-	HasRGB      bool     `json:"has_rgb"`
-	HasSDMMC    bool     `json:"has_sdmmc"`
+	Has4GModule bool        `json:"has_4g_module"`
+	DSIFDTNode  string      `json:"dsi_fdt_node"`
+	RGBPins     []string    `json:"rgb_pins"`
+	HasFBTFT    bool        `json:"has_fbtft"`
+	HasUSB      bool        `json:"has_usb"`
+	HasCSI      bool        `json:"has_csi"`
+	HasRGB      bool        `json:"has_rgb"`
+	HasSDMMC    bool        `json:"has_sdmmc"`
+	Touch       TouchConfig `json:"touch"`
+}
+
+// TouchConfig describes the touch controller of a board.
+//
+// Node is the touch controller node. When a DSI panel carrying touch geometry
+// is selected, its size/inversion properties are written onto Node.
+//
+// Bus, Pinctrl and Addresses drive the standalone touchscreen switch used by
+// boards whose controller is not tied to a DSI panel (RV1106 Pico Ultra): Bus
+// is the I2C controller node, Pinctrl lists the pinctrl node names that have
+// to be referenced by phandle, and Addresses the selectable I2C addresses.
+type TouchConfig struct {
+	Node      string   `json:"node"`
+	Bus       string   `json:"bus"`
+	BusNumber int      `json:"bus_number"`
+	Pinctrl   []string `json:"pinctrl"`
+	Addresses []string `json:"addresses"`
 }
 
 type ReservedPin struct {
