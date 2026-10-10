@@ -91,17 +91,21 @@ func Exists(pattern string) bool {
 	return len(matches) > 0
 }
 
-// IsNodeEnabled checks if a device tree node is enabled (status="okay").
+// IsNodeEnabled reports whether a device tree node is available. A node without
+// a status property is available by default (Devicetree Specification, "status");
+// only an explicit status may disable it. A missing node counts as unavailable.
 func IsNodeEnabled(path string) bool {
 	if !strings.HasPrefix(path, "/proc/device-tree") {
 		path = "/proc/device-tree" + path
 	}
 	data, err := os.ReadFile(filepath.Join(path, "status"))
 	if err != nil {
-		return false
+		// No status property: available when the node itself exists.
+		_, statErr := os.Stat(path)
+		return statErr == nil
 	}
-	s := string(data)
-	return s == "okay" || s == "okay\x00"
+	s := strings.TrimRight(string(data), "\x00")
+	return s == "okay" || s == "ok"
 }
 
 // GetNodePhandle returns the phandle of a device tree node.

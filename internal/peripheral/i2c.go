@@ -282,14 +282,18 @@ func (c *I2C) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool)
 }
 
 func (c *I2C) IsActive() bool {
-	// Check if the ConfigFS overlay exists for this peripheral
 	overlayPath := "/sys/kernel/config/device-tree/overlays/" + c.ID()
-	if _, err := os.Stat(overlayPath); err != nil {
-		return false
-	}
+	_, overlayErr := os.Stat(overlayPath)
+	hasOverlay := overlayErr == nil
 
-	// Also verify the hardware device exists
-	return Exists(fmt.Sprintf("/dev/i2c-%d", c.num))
+	// The mux variants of one controller share a single device tree node, so
+	// the node status alone cannot tell them apart. Require our per-mux
+	// overlay AND an enabled node: Disable() leaves a now-disabled overlay
+	// directory behind, so the overlay alone is stale too.
+	if fullPath, err := c.deps.ResolveAlias(fmt.Sprintf("i2c%d", c.num)); err == nil {
+		return hasOverlay && IsNodeEnabled(fullPath)
+	}
+	return hasOverlay
 }
 
 func (c *I2C) IsConfigEnabled(cfg *config.Store) bool {

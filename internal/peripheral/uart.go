@@ -240,14 +240,18 @@ func (u *UART) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool
 }
 
 func (u *UART) IsActive() bool {
-	// Check if the ConfigFS overlay exists for this peripheral
 	overlayPath := "/sys/kernel/config/device-tree/overlays/" + u.ID()
-	if _, err := os.Stat(overlayPath); err != nil {
-		return false
-	}
+	_, overlayErr := os.Stat(overlayPath)
+	hasOverlay := overlayErr == nil
 
-	// Also verify the hardware device exists
-	return Exists(fmt.Sprintf("/dev/ttyS%d", u.num))
+	// The mux variants of one controller share a single device tree node, so
+	// the node status alone cannot tell them apart. Require our per-mux
+	// overlay AND an enabled node: Disable() leaves a now-disabled overlay
+	// directory behind, so the overlay alone is stale too.
+	if fullPath, err := u.deps.ResolveAlias(fmt.Sprintf("serial%d", u.num)); err == nil {
+		return hasOverlay && IsNodeEnabled(fullPath)
+	}
+	return hasOverlay
 }
 
 // SetPins configures the TX and RX RM_IO pins before calling Enable.
