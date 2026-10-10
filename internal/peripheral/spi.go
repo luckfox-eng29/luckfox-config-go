@@ -89,7 +89,7 @@ func (s *SPI) Enable(ctx context.Context) error {
 			candidates = append(candidates, board.RMIOName(s.csPin))
 		}
 
-		if err := s.deps.Diagram.CheckConflictErr(candidates); err != nil {
+		if err := s.deps.Diagram.CheckConflictErrSelf(candidates); err != nil {
 			return err
 		}
 
@@ -143,14 +143,8 @@ func (s *SPI) Enable(ctx context.Context) error {
 	}
 
 	// Non-RMIO mode
-	pins := []string{
-		fmt.Sprintf("SPI%d_M%d_CLK", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_MOSI", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_MISO", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_CS0", s.num, s.mux),
-	}
-
-	if err := s.deps.Diagram.CheckConflictErr(pins); err != nil {
+	nonRMIO := s.nonRMIOPins()
+	if err := s.deps.Diagram.CheckConflictErrSelf(nonRMIO); err != nil {
 		return err
 	}
 

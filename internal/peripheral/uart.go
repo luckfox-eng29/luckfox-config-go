@@ -76,7 +76,7 @@ func (u *UART) Enable(ctx context.Context) error {
 		txName := board.RMIOName(u.txPin)
 		rxName := board.RMIOName(u.rxPin)
 
-		if err := u.deps.Diagram.CheckConflictErr([]string{txName, rxName}); err != nil {
+		if err := u.deps.Diagram.CheckConflictErrSelf([]string{txName, rxName}); err != nil {
 			return err
 		}
 
@@ -117,7 +117,7 @@ func (u *UART) Enable(ctx context.Context) error {
 	txName := fmt.Sprintf("UART%d_M%d_TX", u.num, u.mux)
 	rxName := fmt.Sprintf("UART%d_M%d_RX", u.num, u.mux)
 
-	if err := u.deps.Diagram.CheckConflictErr([]string{txName, rxName}); err != nil {
+	if err := u.deps.Diagram.CheckConflictErrSelf([]string{txName, rxName}); err != nil {
 		return err
 	}
 

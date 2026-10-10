@@ -80,7 +80,7 @@ func (c *I2C) Enable(ctx context.Context) error {
 		sdaName := board.RMIOName(c.sdaPin)
 		sclName := board.RMIOName(c.sclPin)
 
-		if err := c.deps.Diagram.CheckConflictErr([]string{sdaName, sclName}); err != nil {
+		if err := c.deps.Diagram.CheckConflictErrSelf([]string{sdaName, sclName}); err != nil {
 			return err
 		}
 
@@ -126,7 +126,7 @@ func (c *I2C) Enable(ctx context.Context) error {
 	sdaName := fmt.Sprintf("I2C%d_M%d_SDA", c.num, c.mux)
 	sclName := fmt.Sprintf("I2C%d_M%d_SCL", c.num, c.mux)
 
-	if err := c.deps.Diagram.CheckConflictErr([]string{sdaName, sclName}); err != nil {
+	if err := c.deps.Diagram.CheckConflictErrSelf([]string{sdaName, sclName}); err != nil {
 		return err
 	}
 

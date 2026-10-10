@@ -59,7 +59,7 @@ func (r *RGB) Enable(ctx context.Context) error {
 		return err
 	}
 
-	if err := r.deps.Diagram.CheckConflictErr(r.pins); err != nil {
+	if err := r.deps.Diagram.CheckConflictErrSelf(r.pins); err != nil {
 		return err
 	}
 

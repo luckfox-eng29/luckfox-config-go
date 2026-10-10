@@ -75,7 +75,7 @@ func (c *CAN) Enable(ctx context.Context) error {
 		txName := board.RMIOName(c.txPin)
 		rxName := board.RMIOName(c.rxPin)
 
-		if err := c.deps.Diagram.CheckConflictErr([]string{txName, rxName}); err != nil {
+		if err := c.deps.Diagram.CheckConflictErrSelf([]string{txName, rxName}); err != nil {
 			return err
 		}
 
@@ -115,7 +115,7 @@ func (c *CAN) Enable(ctx context.Context) error {
 	txName := fmt.Sprintf("CAN%d_M%d_TX", c.num, c.mux)
 	rxName := fmt.Sprintf("CAN%d_M%d_RX", c.num, c.mux)
 
-	if err := c.deps.Diagram.CheckConflictErr([]string{txName, rxName}); err != nil {
+	if err := c.deps.Diagram.CheckConflictErrSelf([]string{txName, rxName}); err != nil {
 		return err
 	}
 

@@ -62,7 +62,7 @@ func (f *FBTFT) Enable(ctx context.Context) error {
 		f.compatible = defaultFBTFTCompatible
 	}
 
-	if err := f.deps.Diagram.CheckConflictErr(allPins); err != nil {
+	if err := f.deps.Diagram.CheckConflictErrSelf(allPins); err != nil {
 		return err
 	}
 

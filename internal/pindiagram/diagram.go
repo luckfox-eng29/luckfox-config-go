@@ -55,6 +55,43 @@ func (d *PinDiagram) IsMarked(rmio string) bool {
 // Mirrors luckfox_check_pin_diagram: any two pins on the same |       | row
 // are physically shared and cannot be used simultaneously.
 func (d *PinDiagram) CheckConflict(candidates []string) (string, error) {
+	return d.checkConflict(candidates, nil)
+}
+
+// CheckConflictExcluding is like CheckConflict but ignores any marked pin whose
+// name is listed in exclude. It is used by compatible apps, whose own enable
+// targets may occupy the same physical rows as the app's declared check pins.
+func (d *PinDiagram) CheckConflictExcluding(candidates, exclude []string) (string, error) {
+	excludeSet := make(map[string]bool, len(exclude))
+	for _, e := range exclude {
+		excludeSet[e] = true
+	}
+	return d.checkConflict(candidates, excludeSet)
+}
+
+// CheckConflictErrExcluding is like CheckConflictExcluding but returns an error
+// if a conflict is found.
+func (d *PinDiagram) CheckConflictErrExcluding(candidates, exclude []string) error {
+	conflict, err := d.CheckConflictExcluding(candidates, exclude)
+	if err != nil {
+		return err
+	}
+	if conflict != "" {
+		return fmt.Errorf("pin conflict: %s is already in use on the same physical row", conflict)
+	}
+	return nil
+}
+
+// CheckConflictErrSelf is CheckConflictErr with the candidate pins themselves
+// excluded. Peripherals mark their own pins when the saved configuration is
+// loaded, so a plain check would make re-enabling an already-enabled
+// peripheral conflict with itself. Conflicts with other peripherals, which
+// share a physical row under a different pin name, are still reported.
+func (d *PinDiagram) CheckConflictErrSelf(candidates []string) error {
+	return d.CheckConflictErrExcluding(candidates, candidates)
+}
+
+func (d *PinDiagram) checkConflict(candidates []string, exclude map[string]bool) (string, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -101,6 +138,9 @@ func (d *PinDiagram) CheckConflict(candidates []string) (string, error) {
 			// Check if any marked pin shares this side
 			sideFields := strings.Fields(side)
 			for pin := range d.marked {
+				if exclude[pin] {
+					continue
+				}
 				for _, field := range sideFields {
 					if match(field, pin) {
 						return pin, nil
