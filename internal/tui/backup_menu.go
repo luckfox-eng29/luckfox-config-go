@@ -175,8 +175,8 @@ func (m *backupMenu) updateMediaSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		go func() {
-			if m.selectedPart.BackupType == backup.BackupTypeRootFS {
-				m.errChan <- backup.RootfsBackup(media, m.progressChan)
+			if m.selectedPart.BackupType == backup.BackupTypeExt4 {
+				m.errChan <- backup.FilesystemBackup(m.selectedPart.Partition.Path, m.selectedPart.Partition.Name, media, m.progressChan)
 			} else if m.selectedPart.BackupType == backup.BackupTypeDD {
 				m.errChan <- backup.DDBackup(m.selectedPart.Partition.Path, media, m.progressChan)
 			}

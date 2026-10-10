@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"luckfox-config/internal/logger"
 )
@@ -34,44 +35,44 @@ const (
 	SDCard
 )
 
-// RootfsBackup performs a backup of the root filesystem to an ext4 image.
-func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
+// FilesystemBackup backs up an ext4 partition into a fresh ext4 image stored on
+// the selected media.
+//
+// The rsync source is the partition's current mount point when it is already
+// mounted — that is how the running root is handled, since it cannot be mounted
+// a second time — otherwise the partition is mounted read-only on a temporary
+// path for the duration of the copy. The image is named
+// backup_<partition name>.img, matching DDBackup.
+func FilesystemBackup(partitionPath, partName string, media MediaClass, progressChan chan<- Progress) error {
 	defer close(progressChan)
 
-	progressChan <- Progress{Percentage: 1, Message: "Checking root filesystem..."}
-	// 1. Check rootfs type by reading /proc/mounts (most universal way)
-	var fsType string
-	if data, err := os.ReadFile("/proc/mounts"); err == nil {
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			fields := strings.Fields(line)
-			if len(fields) >= 3 && fields[1] == "/" {
-				fsType = fields[2]
-				break
-			}
+	progressChan <- Progress{Percentage: 1, Message: "Checking partition..."}
+
+	if partName == "" {
+		partName = filepath.Base(partitionPath)
+	}
+
+	// Resolve the rsync source: an already mounted partition contributes its
+	// mount point, an unmounted one is mounted for us.
+	source := mountPointOf(partitionPath)
+	var tempMount string
+	if source == "" {
+		var err error
+		tempMount, err = mountReadOnly(partitionPath)
+		if err != nil {
+			return err
 		}
+		source = tempMount
 	}
-
-	// Fallback to stat if /proc/mounts failed
-	if fsType == "" {
-		if out, err := exec.Command("stat", "-f", "-c", "%T", "/").Output(); err == nil {
-			fsType = strings.TrimSpace(string(out))
-			if fsType == "ext2/ext3" {
-				fsType = "ext4"
-			}
+	defer func() {
+		if tempMount != "" {
+			unmount(tempMount)
 		}
-	}
+	}()
 
-	if fsType == "" {
-		return fmt.Errorf("could not determine root filesystem type")
-	}
-
-	if fsType != "ext4" {
-		return fmt.Errorf("root filesystem is not ext4 (found: %s)", fsType)
-	}
+	isRoot := source == "/"
 
 	progressChan <- Progress{Percentage: 5, Message: "Checking dependencies..."}
-	// 2. Check rsync
 	if _, err := exec.LookPath("rsync"); err != nil {
 		return fmt.Errorf("rsync is not installed")
 	}
@@ -81,7 +82,7 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 
 	switch media {
 	case Local:
-		imageName = "/mnt/backup_rootfs.img"
+		imageName = "/mnt/backup_" + partName + ".img"
 		mountPoint = "/mnt/backup_img"
 		var err error
 		availableSpaceKB, err = getAvailableSpace("/mnt")
@@ -92,7 +93,7 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 		if !isMounted("/mnt/udisk") {
 			return fmt.Errorf("USB disk is not mounted at /mnt/udisk")
 		}
-		imageName = "/mnt/udisk/backup_rootfs.img"
+		imageName = "/mnt/udisk/backup_" + partName + ".img"
 		mountPoint = "/mnt/udisk/backup_img"
 		var err error
 		availableSpaceKB, err = getAvailableSpace("/mnt/udisk")
@@ -103,7 +104,7 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 		if !isMounted("/mnt/sdcard") {
 			return fmt.Errorf("SD card is not mounted at /mnt/sdcard")
 		}
-		imageName = "/mnt/sdcard/backup_rootfs.img"
+		imageName = "/mnt/sdcard/backup_" + partName + ".img"
 		mountPoint = "/mnt/sdcard/backup_img"
 		var err error
 		availableSpaceKB, err = getAvailableSpace("/mnt/sdcard")
@@ -114,9 +115,17 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 		return fmt.Errorf("invalid media class")
 	}
 
+	// When the partition is not the running root, it may be a second mount of a
+	// filesystem that also hosts the image (the root mounted again on a temporary
+	// path, for example). Copying would then feed the image into itself, so
+	// refuse before the rsync starts filling the filesystem.
+	if !isRoot && sameFilesystem(source, filepath.Dir(mountPoint)) {
+		return fmt.Errorf("refusing to back up %s: target %s is on the same filesystem", source, mountPoint)
+	}
+
 	progressChan <- Progress{Percentage: 8, Message: "Calculating required space..."}
 	// 3. Calculate required space
-	usedKB, err := getUsedSpace("/")
+	usedKB, err := getUsedSpace(source)
 	if err != nil {
 		return fmt.Errorf("get used space: %w", err)
 	}
@@ -287,20 +296,25 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 		}
 	}
 
-	progressChan <- Progress{Percentage: 60, Message: "Copying rootfs with rsync..."}
-	excludes := []string{"/sys", "/mnt", "/tmp", "/proc"}
-	if isMounted("/oem") {
-		excludes = append(excludes, "/oem")
-	}
-	if isMounted("/userdata") {
-		excludes = append(excludes, "/userdata")
+	progressChan <- Progress{Percentage: 60, Message: "Copying filesystem with rsync..."}
+	// Only the running root needs excludes: the target image lives under /mnt
+	// and the other ext4 partitions are backed up on their own.
+	var excludes []string
+	if isRoot {
+		excludes = []string{"/sys", "/mnt", "/tmp", "/proc"}
+		if isMounted("/oem") {
+			excludes = append(excludes, "/oem")
+		}
+		if isMounted("/userdata") {
+			excludes = append(excludes, "/userdata")
+		}
 	}
 
 	args := []string{"-aX", "--info=progress2"}
 	for _, e := range excludes {
 		args = append(args, "--exclude="+e)
 	}
-	args = append(args, "/", mountPoint)
+	args = append(args, source, mountPoint)
 
 	rsyncCmd := exec.Command("rsync", args...)
 	stdout, _ := rsyncCmd.StdoutPipe()
@@ -331,10 +345,12 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 		return fmt.Errorf("rsync wait: %w", err)
 	}
 
-	progressChan <- Progress{Percentage: 90, Message: "Creating excluded directories..."}
-	// Create excluded directories in the backup
-	for _, dir := range excludes {
-		os.MkdirAll(filepath.Join(mountPoint, dir), 0755)
+	if isRoot {
+		progressChan <- Progress{Percentage: 90, Message: "Creating excluded directories..."}
+		// Create excluded directories in the backup
+		for _, dir := range excludes {
+			os.MkdirAll(filepath.Join(mountPoint, dir), 0755)
+		}
 	}
 
 	progressChan <- Progress{Percentage: 95, Message: "Unmounting and finalizing..."}
@@ -351,20 +367,43 @@ func RootfsBackup(media MediaClass, progressChan chan<- Progress) error {
 	return nil
 }
 
+// filesystemSpaceKB returns the used and available space of the filesystem that
+// contains path, in kilobytes.
+//
+// The numbers come from statfs(2) instead of parsed "df" output on purpose:
+// BusyBox df wraps the filesystem column onto a line of its own whenever the
+// device name is too long for the column — which is the case for every
+// /dev/block/by-name/<name> partition. The wrapped layout shifts every field, so
+// a fixed awk column picks the wrong one: "df -k /oem | tail -1 | awk '{print
+// $3}'" returns Available instead of Used (452556 vs 29892 on the RV1106
+// image), which inflated an oem backup from 36 MB to 531 MB. statfs() cannot be
+// reformatted by the userland and reports exactly the columns df derives.
+func filesystemSpaceKB(path string) (usedKB, availableKB int64, err error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, 0, err
+	}
+
+	blockSize := int64(st.Bsize)
+	usedKB = (int64(st.Blocks) - int64(st.Bfree)) * blockSize / 1024
+	availableKB = int64(st.Bavail) * blockSize / 1024
+	return usedKB, availableKB, nil
+}
+
 func getAvailableSpace(path string) (int64, error) {
-	out, err := exec.Command("sh", "-c", fmt.Sprintf("df -k %s | tail -1 | awk '{print $4}'", path)).Output()
+	_, availableKB, err := filesystemSpaceKB(path)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	return availableKB, nil
 }
 
 func getUsedSpace(path string) (int64, error) {
-	out, err := exec.Command("sh", "-c", fmt.Sprintf("df -k %s | tail -1 | awk '{print $3}'", path)).Output()
+	usedKB, _, err := filesystemSpaceKB(path)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	return usedKB, nil
 }
 
 func isMounted(path string) bool {
@@ -377,6 +416,77 @@ func isMounted(path string) bool {
 		}
 	}
 	return false
+}
+
+// mountPointOf returns the mount point of an already mounted block device, or
+// "" when it is not mounted. Devices are matched on their major:minor numbers so
+// that the kernel's own aliases — /dev/root for the running root,
+// /dev/block/by-name/<name> for the others — resolve to the same partition.
+//
+// A device can be mounted more than once (a bind mount, or a second mount of the
+// running root); "/" wins when present so the running root is always recognised.
+func mountPointOf(device string) string {
+	major, minor, err := deviceNumbers(device)
+	if err != nil {
+		return ""
+	}
+
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return ""
+	}
+
+	want := fmt.Sprintf("%d:%d", major, minor)
+	found := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		// id parent major:minor root mountpoint ...
+		if len(fields) < 5 || fields[2] != want {
+			continue
+		}
+		if fields[4] == "/" {
+			return "/"
+		}
+		if found == "" {
+			found = fields[4]
+		}
+	}
+	return found
+}
+
+// sameFilesystem reports whether two paths live on the same mounted filesystem.
+func sameFilesystem(a, b string) bool {
+	var sa, sb syscall.Stat_t
+	if err := syscall.Stat(a, &sa); err != nil {
+		return false
+	}
+	if err := syscall.Stat(b, &sb); err != nil {
+		return false
+	}
+	return sa.Dev == sb.Dev
+}
+
+// mountReadOnly mounts a block device read-only on a temporary mount point and
+// returns that path. The caller must unmount it when done.
+func mountReadOnly(device string) (string, error) {
+	dir := filepath.Join("/mnt", ".backup_src")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("create mount point: %w", err)
+	}
+	if out, err := exec.Command("mount", "-o", "ro", device, dir).CombinedOutput(); err != nil {
+		os.RemoveAll(dir)
+		return "", fmt.Errorf("mount %s: %w\n%s", device, err, out)
+	}
+	return dir, nil
+}
+
+// unmount unmounts path, falling back to a lazy unmount, and removes the
+// temporary mount point.
+func unmount(path string) {
+	if err := exec.Command("umount", path).Run(); err != nil {
+		exec.Command("umount", "-l", path).Run()
+	}
+	os.RemoveAll(path)
 }
 
 // partitionSizeBytes returns the size of a block device in bytes.
