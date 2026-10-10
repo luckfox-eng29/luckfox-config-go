@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"luckfox-config/internal/backup"
+	"luckfox-config/internal/board"
 	"luckfox-config/internal/config"
 	"luckfox-config/internal/peripheral"
 	"luckfox-config/internal/tui"
@@ -23,7 +24,6 @@ import (
 // registerPeripheralCommands adds all peripheral subcommands to root.
 func registerPeripheralCommands(root *cobra.Command) {
 	root.AddCommand(
-		cmdGPIO(),
 		cmdPWM(),
 		cmdUART(),
 		cmdI2C(),
@@ -147,47 +147,36 @@ func cmdBackup() *cobra.Command {
 				}
 			}()
 
-			return backup.RootfsBackup(media, progressChan)
+			root, err := backup.RootPartition()
+			if err != nil {
+				return err
+			}
+			if root.FSType != "ext4" {
+				return fmt.Errorf("root filesystem is not ext4 (found: %q)", root.FSType)
+			}
+
+			return backup.FilesystemBackup(root.Path, root.Name, media, progressChan)
 		},
 	}
 }
 
-func cmdGPIO() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "gpio [gpio] [command]",
-		Short: "GPIO pin configuration (pull resistor, drive strength, mux mode)",
-		Example: `  luckfox-config gpio mode 41 1
-  luckfox-config gpio 41 mode 1`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return cmd.Help()
-			}
-			// If first arg is a number, try to treat it as: gpio <id> <action> <val>
-			if gpio, err := strconv.Atoi(args[0]); err == nil {
-				if len(args) < 3 {
-					return fmt.Errorf("usage: luckfox-config gpio <gpio> <mode|pull|drive> <value>")
-				}
-				action := args[1]
-				val := args[2]
-				switch action {
-				case "pull":
-					return runGPIOPull(gpio, val)
-				case "drive":
-					return runGPIODrive(gpio, val)
-				case "mode":
-					return runGPIOMode(gpio, val)
-				default:
-					return fmt.Errorf("unknown action %q, expected pull, drive, or mode", action)
-				}
-			}
-			return cmd.Help()
-		},
+// pinModuleFor returns the config module that stores a raw GPIO pin's state: the
+// module of the board's GPIO peripheral when the pin diagram exposes the pin,
+// otherwise the canonical GPIO name. Pins the diagram does not expose still get
+// a module so the boot-time load can replay them.
+func pinModuleFor(appCtx *tui.AppContext, gpio int) string {
+	if g := boardGPIOFor(appCtx, gpio); g != nil {
+		return g.ConfigModule()
 	}
-	cmd.AddCommand(cmdGPIOPull(), cmdGPIODrive(), cmdGPIOMode())
-	return cmd
+	return board.RawGPIOToPin(gpio).String()
 }
 
-func runGPIOPull(gpio int, modeStr string) error {
+// savePinKey records one pin setting so the boot-time load re-applies it.
+func savePinKey(appCtx *tui.AppContext, gpio int, key, value string) error {
+	return peripheral.SavePinSetting(appCtx.Cfg, pinModuleFor(appCtx, gpio), key, value)
+}
+
+func runGPIOPull(pinArgs []string, modeStr string) error {
 	var mode peripheral.PullMode
 	switch modeStr {
 	case "none":
@@ -206,14 +195,25 @@ func runGPIOPull(gpio int, modeStr string) error {
 	}
 	defer cleanup()
 
-	if err := peripheral.SetPull(appCtx.Board.ChipInstance, gpio, mode); err != nil {
+	raw, name, err := gpioSpec(appCtx, pinArgs)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("GPIO%d pull set to %s\n", gpio, modeStr)
+	if err := validateGPIOPin(appCtx, raw); err != nil {
+		return err
+	}
+
+	if err := peripheral.SetPull(appCtx.Board.ChipInstance, raw, mode); err != nil {
+		return err
+	}
+	if err := savePinKey(appCtx, raw, "PULL", modeStr); err != nil {
+		return err
+	}
+	fmt.Printf("%s pull set to %s\n", name, modeStr)
 	return nil
 }
 
-func runGPIODrive(gpio int, levelStr string) error {
+func runGPIODrive(pinArgs []string, levelStr string) error {
 	level, err := strconv.Atoi(levelStr)
 	if err != nil || level < 0 || level > 5 {
 		return fmt.Errorf("drive level must be 0-5, got %q", levelStr)
@@ -225,14 +225,25 @@ func runGPIODrive(gpio int, levelStr string) error {
 	}
 	defer cleanup()
 
-	if err := peripheral.SetDriveStrength(appCtx.Board.ChipInstance, gpio, level); err != nil {
+	raw, name, err := gpioSpec(appCtx, pinArgs)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("GPIO%d drive strength set to level %d\n", gpio, level)
+	if err := validateGPIOPin(appCtx, raw); err != nil {
+		return err
+	}
+
+	if err := peripheral.SetDriveStrength(appCtx.Board.ChipInstance, raw, level); err != nil {
+		return err
+	}
+	if err := savePinKey(appCtx, raw, "DRIVE", strconv.Itoa(level)); err != nil {
+		return err
+	}
+	fmt.Printf("%s drive strength set to level %d\n", name, level)
 	return nil
 }
 
-func runGPIOMode(gpio int, modeStr string) error {
+func runGPIOMode(pinArgs []string, modeStr string) error {
 	mode, err := strconv.Atoi(modeStr)
 	if err != nil || mode < 0 {
 		return fmt.Errorf("mode must be a non-negative integer, got %q", modeStr)
@@ -243,62 +254,22 @@ func runGPIOMode(gpio int, modeStr string) error {
 	}
 	defer cleanup()
 
-	if err := peripheral.SetPinMode(appCtx.Board.ChipInstance, gpio, mode); err != nil {
+	raw, name, err := gpioSpec(appCtx, pinArgs)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("GPIO%d iomux mode set to %d\n", gpio, mode)
+	if err := validateGPIOPin(appCtx, raw); err != nil {
+		return err
+	}
+
+	if err := peripheral.SetPinMode(appCtx.Board.ChipInstance, raw, mode); err != nil {
+		return err
+	}
+	if err := savePinKey(appCtx, raw, "MODE", strconv.Itoa(mode)); err != nil {
+		return err
+	}
+	fmt.Printf("%s iomux mode set to %d\n", name, mode)
 	return nil
-}
-
-func cmdGPIOPull() *cobra.Command {
-	return &cobra.Command{
-		Use:   "pull <gpio> <none|up|down>",
-		Short: "Set pull resistor on a GPIO pin",
-		Example: `  luckfox-config gpio pull 5 up
-  luckfox-config gpio pull 41 none`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			gpio, err := strconv.Atoi(args[0])
-			if err != nil || gpio < 0 {
-				return fmt.Errorf("gpio must be a non-negative integer, got %q", args[0])
-			}
-			return runGPIOPull(gpio, args[1])
-		},
-	}
-}
-
-func cmdGPIODrive() *cobra.Command {
-	return &cobra.Command{
-		Use:   "drive <gpio> <level>",
-		Short: "Set drive strength on a GPIO pin (level 0-5)",
-		Example: `  luckfox-config gpio drive 5 3
-  luckfox-config gpio drive 41 2`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			gpio, err := strconv.Atoi(args[0])
-			if err != nil || gpio < 0 {
-				return fmt.Errorf("gpio must be a non-negative integer, got %q", args[0])
-			}
-			return runGPIODrive(gpio, args[1])
-		},
-	}
-}
-
-func cmdGPIOMode() *cobra.Command {
-	return &cobra.Command{
-		Use:   "mode <gpio> <mode>",
-		Short: "Set iomux mux mode on a GPIO pin",
-		Example: `  luckfox-config gpio mode 5 0   # reset to GPIO
-  luckfox-config gpio mode 41 16  # UART1 TX`,
-		Args: cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			gpio, err := strconv.Atoi(args[0])
-			if err != nil || gpio < 0 {
-				return fmt.Errorf("gpio must be a non-negative integer, got %q", args[0])
-			}
-			return runGPIOMode(gpio, args[1])
-		},
-	}
 }
 
 // ─── PWM ─────────────────────────────────────────────────────────────────────

@@ -88,6 +88,10 @@ type AppContext struct {
 	Panels   []peripheral.DSIPanelFamily
 	Ctx      context.Context
 	Warnings []string
+	// Deps is the peripheral dependency set the registry was built from. It
+	// lets a command build a peripheral the board does not register, such as a
+	// GPIO pin outside the pin diagram.
+	Deps peripheral.Deps
 }
 
 // AppModel is the root bubbletea model. It manages a navigation stack of screens.

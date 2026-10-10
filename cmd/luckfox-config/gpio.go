@@ -32,31 +32,85 @@ var (
 func newGPIOCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "gpio [PIN | BANK GROUP NUM]",
-		Short: "Configure a GPIO pin (pull resistor and drive strength)",
-		Long: `Configure a GPIO pin the board exposes in its pin diagram.
+		Short: "Configure a GPIO pin (pull resistor, drive strength, iomux mode)",
+		Long: `Configure a GPIO pin.
 
-The pin is selected either by name (RM_IO12 or GPIO1_C6, case insensitive) or by
-its bank/group/number triple (1 C 6). Without any pin the exposed pins and their
-current state are listed.
+The pin is selected by a raw GPIO number (54), a pin diagram name (GPIO1_C6 or
+RM_IO48), or by its bank/group/number triple (1 C 6). Without any pin the pins
+the board exposes and their current state are listed.
 
-By default a pin is switched to GPIO output mode and keeps the pull resistor and
-drive strength it already has; --pull and --drive override them.`,
+By default the pin keeps the mux mode, pull resistor and drive strength already
+recorded for it; --pull and --drive override the latter two. A pin the board pin
+diagram does not expose is accepted as well: it has no peripheral of its own, so
+its settings are saved under the pin's canonical name and replayed by the
+boot-time load.
+
+--release accepts any GPIO, including a pin the board pin diagram does not expose
+and a pin no bank of this SoC covers, so a stale record can always be dropped.`,
 		Example: `  luckfox-config gpio --list
-  luckfox-config gpio GPIO1_C6 --pull up
-  luckfox-config gpio RM_IO12 --pull down --drive 4
-  luckfox-config gpio 1 C 6 --pull up
-  luckfox-config gpio GPIO1_C6 --release`,
+  luckfox-config gpio 54 --pull up
+  luckfox-config gpio GPIO1_C6 --pull down --drive 4
+  luckfox-config gpio 1 C 6 --release
+  luckfox-config gpio pull 41 up
+  luckfox-config gpio mode 41 1
+  luckfox-config gpio 41 mode 1`,
 		Args: cobra.MaximumNArgs(3),
 		RunE: runGPIO,
 	}
 	cmd.Flags().BoolVar(&gpioListFlag, "list", false, "List the GPIO pins exposed by the board")
 	cmd.Flags().StringVar(&gpioPullFlag, "pull", "", "Pull resistor: none, up or down (default: keep current)")
 	cmd.Flags().IntVar(&gpioDriveFlag, "drive", -1, "Drive strength level 0-5 (default: keep current)")
-	cmd.Flags().BoolVar(&gpioReleaseFlag, "release", false, "Release the pin (input, no pull, default drive strength)")
+	cmd.Flags().BoolVar(&gpioReleaseFlag, "release", false, "Release the pin (input, no pull, default drive strength) and drop its saved settings; accepts any GPIO")
+	cmd.AddCommand(cmdGPIOPull(), cmdGPIODrive(), cmdGPIOMode())
 	return cmd
 }
 
+func cmdGPIOPull() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pull <pin> <none|up|down>",
+		Short: "Set pull resistor on a GPIO pin",
+		Example: `  luckfox-config gpio pull 41 up
+  luckfox-config gpio pull GPIO1_C6 none`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runGPIOPull(args[:1], args[1])
+		},
+	}
+}
+
+func cmdGPIODrive() *cobra.Command {
+	return &cobra.Command{
+		Use:   "drive <pin> <level>",
+		Short: "Set drive strength on a GPIO pin (level 0-5)",
+		Example: `  luckfox-config gpio drive 41 2
+  luckfox-config gpio drive GPIO1_C6 3`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runGPIODrive(args[:1], args[1])
+		},
+	}
+}
+
+func cmdGPIOMode() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mode <pin> <mode>",
+		Short: "Set iomux mux mode on a GPIO pin",
+		Example: `  luckfox-config gpio mode 41 0   # reset to GPIO
+  luckfox-config gpio mode 41 16  # UART1 TX`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runGPIOMode(args[:1], args[1])
+		},
+	}
+}
+
 func runGPIO(_ *cobra.Command, args []string) error {
+	// "gpio 41 mode 1" is accepted alongside "gpio mode 41 1": cobra only hands
+	// the arguments here when the first one is not a subcommand name.
+	if len(args) == 3 && isGPIOAction(args[1]) {
+		return runGPIOAction(args[1], args[0], args[2])
+	}
+
 	bc, err := initBoard()
 	if err != nil {
 		return err
@@ -77,21 +131,36 @@ func runGPIO(_ *cobra.Command, args []string) error {
 		return nil
 	}
 
-	name, err := gpioPinName(args)
+	raw, name, err := gpioSpec(appCtx, args)
 	if err != nil {
 		return err
 	}
-	pin := findGPIO(pins, name)
-	if pin == nil {
-		return fmt.Errorf("pin %s is not exposed by this board; run 'luckfox-config gpio --list'", name)
+
+	// --release accepts any GPIO, not only the pins the board pin diagram
+	// exposes: a pin recorded by an earlier command may well be outside it. It is
+	// also the way to drop a record of a pin that never existed, so it skips the
+	// pin range check below.
+	if gpioReleaseFlag {
+		return releaseGPIO(appCtx, raw, name)
 	}
 
-	if gpioReleaseFlag {
-		if err := pin.Disable(appCtx.Ctx); err != nil {
+	// Nothing may be written to a pin the SoC has no bank for: the record would
+	// outlive the command and the boot-time load would write a non-existent
+	// register, aborting the whole load.
+	if err := validateGPIOPin(appCtx, raw); err != nil {
+		return err
+	}
+
+	pin := boardGPIOFor(appCtx, raw)
+	if pin == nil {
+		// A pin outside the board pin diagram has no peripheral owning it, so one
+		// is built for the write. Its config module is the canonical pin name the
+		// "gpio" subcommands use, so the boot-time load replays it the same way.
+		g, err := peripheral.NewGPIOByName(name, appCtx.Deps)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("%s released (input, no pull, default drive strength)\n", pin.Name())
-		return nil
+		pin = g
 	}
 
 	if gpioPullFlag != "" {
@@ -111,7 +180,7 @@ func runGPIO(_ *cobra.Command, args []string) error {
 	if err := pin.Enable(appCtx.Ctx); err != nil {
 		return err
 	}
-	fmt.Printf("%s enabled: pull=%s drive=%d\n", pin.Name(), pullModeName(pin.Pull()), pin.DriveStrength())
+	fmt.Printf("%s configured: pull=%s drive=%d\n", pin.Name(), pullModeName(pin.Pull()), pin.DriveStrength())
 	return nil
 }
 
@@ -126,58 +195,119 @@ func boardGPIOs(appCtx *tui.AppContext) []*peripheral.GPIO {
 	return out
 }
 
-// gpioPinName turns the command arguments into a canonical pin name.
-func gpioPinName(args []string) (string, error) {
-	if len(args) == 3 {
-		args = []string{fmt.Sprintf("GPIO%s_%s%s", args[0], strings.ToUpper(args[1]), args[2])}
-	}
-	if len(args) != 1 {
-		return "", fmt.Errorf("expected one pin name or a bank/group/number triple")
-	}
-
-	up := strings.ToUpper(strings.TrimSpace(args[0]))
-	if rmio, err := board.ParseRMIO(up); err == nil {
-		return board.RMIOName(rmio), nil
-	}
-	pin, err := board.ParseGPIO(up)
-	if err != nil {
-		return "", fmt.Errorf("invalid pin %q: expected RM_IO<n> or GPIO<bank>_<group><num>", args[0])
-	}
-	return fmt.Sprintf("GPIO%d_%s%d", pin.Bank, pin.Group, pin.Number), nil
-}
-
-// findGPIO looks up a pin by name.
-func findGPIO(pins []*peripheral.GPIO, name string) *peripheral.GPIO {
-	for _, g := range pins {
-		if strings.EqualFold(g.Name(), name) {
+// boardGPIOFor returns the GPIO peripheral that owns a raw pin number, or nil
+// when the board pin diagram does not expose that pin.
+func boardGPIOFor(appCtx *tui.AppContext, raw int) *peripheral.GPIO {
+	for _, p := range appCtx.Registry.All() {
+		if g, ok := p.(*peripheral.GPIO); ok && g.Pin() == raw {
 			return g
 		}
 	}
 	return nil
 }
 
+// isGPIOAction reports whether s names one of the per-attribute GPIO actions.
+func isGPIOAction(s string) bool {
+	switch s {
+	case "pull", "drive", "mode":
+		return true
+	}
+	return false
+}
+
+// runGPIOAction dispatches the positional form "gpio <pin> <action> <value>".
+func runGPIOAction(action, pin, value string) error {
+	switch action {
+	case "pull":
+		return runGPIOPull([]string{pin}, value)
+	case "drive":
+		return runGPIODrive([]string{pin}, value)
+	case "mode":
+		return runGPIOMode([]string{pin}, value)
+	}
+	return fmt.Errorf("unknown action %q, expected pull, drive or mode", action)
+}
+
+// validateGPIOPin rejects a raw GPIO number the chip has no bank for.
+func validateGPIOPin(appCtx *tui.AppContext, raw int) error {
+	pin := board.RawGPIOToPin(raw)
+	if _, err := appCtx.Board.ChipInstance.GetGPIOBase(pin.Bank); err != nil {
+		return fmt.Errorf("pin %s: %w", pin.String(), err)
+	}
+	return nil
+}
+
+// isDigits reports whether s is a non-empty run of decimal digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// gpioSpec resolves the pin arguments given on the command line to a raw GPIO
+// number and to the name that pin is shown under. A bare number is a raw GPIO
+// number: that is the form the gpio subcommands have always taken
+// ("gpio mode 41 1").
+func gpioSpec(appCtx *tui.AppContext, args []string) (int, string, error) {
+	if len(args) == 3 {
+		args = []string{fmt.Sprintf("GPIO%s_%s%s", args[0], strings.ToUpper(args[1]), args[2])}
+	}
+	if len(args) != 1 {
+		return 0, "", fmt.Errorf("expected one pin or a bank/group/number triple")
+	}
+
+	up := strings.ToUpper(strings.TrimSpace(args[0]))
+	var raw int
+	if isDigits(up) {
+		raw, _ = strconv.Atoi(up)
+	} else if pin, err := board.ParseGPIO(up); err == nil {
+		raw = pin.Raw()
+	} else if rmio, rmioErr := board.ParseRMIO(up); rmioErr == nil {
+		pin, err := board.RMIOToGPIO(appCtx.Board.ChipInstance, rmio)
+		if err != nil {
+			return 0, "", fmt.Errorf("RM_IO%d: %w", rmio, err)
+		}
+		raw = pin.Raw()
+	} else {
+		return 0, "", fmt.Errorf("invalid pin %q: expected a raw GPIO number, GPIO<bank>_<group><num>, RM_IO<n>, or a bank/group/number triple", args[0])
+	}
+	return raw, gpioName(appCtx, raw), nil
+}
+
+// gpioName returns the name to show a raw pin under: the board's own name when
+// its pin diagram exposes the pin, the canonical GPIO name otherwise.
+func gpioName(appCtx *tui.AppContext, raw int) string {
+	if g := boardGPIOFor(appCtx, raw); g != nil {
+		return g.Name()
+	}
+	return board.RawGPIOToPin(raw).String()
+}
+
+// releaseGPIO returns a pin to its default state and drops its saved settings.
+// Pins the board pin diagram exposes are released through the pin layer, like
+// any other pin: pins outside the diagram have no peripheral of their own.
+func releaseGPIO(appCtx *tui.AppContext, raw int, name string) error {
+	if err := peripheral.ReleasePin(appCtx.Board.ChipInstance, appCtx.Cfg, appCtx.Diagram, raw, name, pinModuleFor(appCtx, raw)); err != nil {
+		return err
+	}
+	fmt.Printf("%s released (input, no pull, default drive strength)\n", name)
+	return nil
+}
+
 // parsePullMode parses a --pull value.
 func parsePullMode(s string) (peripheral.PullMode, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "none", "no", "off":
-		return peripheral.PullNone, nil
-	case "up":
-		return peripheral.PullUp, nil
-	case "down":
-		return peripheral.PullDown, nil
-	}
-	return peripheral.PullNone, fmt.Errorf("invalid pull %q: expected none, up or down", s)
+	return peripheral.ParsePullMode(s)
 }
 
 // pullModeName returns the name of a pull mode as used on the command line.
 func pullModeName(m peripheral.PullMode) string {
-	switch m {
-	case peripheral.PullUp:
-		return "up"
-	case peripheral.PullDown:
-		return "down"
-	}
-	return "none"
+	return peripheral.PullModeName(m)
 }
 
 // printGPIOList prints the exposed pins with their saved state. Pins that the
@@ -211,7 +341,7 @@ func printGPIOList(appCtx *tui.AppContext, pins []*peripheral.GPIO) {
 	sort.Ints(keys)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PIN\tSTATUS\tPULL\tDRIVE")
+	fmt.Fprintln(w, "PIN\tPULL\tDRIVE\tMODE")
 	for _, k := range keys {
 		grp := byPin[k]
 		sort.Slice(grp.names, func(i, j int) bool { return len(grp.names[i]) < len(grp.names[j]) })
@@ -220,20 +350,26 @@ func printGPIOList(appCtx *tui.AppContext, pins []*peripheral.GPIO) {
 			label += " (" + strings.Join(grp.names[1:], ", ") + ")"
 		}
 
-		// The saved state lives under the module of the name that was used to
-		// configure the pin, so every name of the physical pin is checked.
-		status, pull, drive := "disabled", "-", "-"
+		// The override lives under the module of the name that was used to
+		// configure the pin, so every name of the physical pin is checked for one.
+		pull, drive, mode := "-", "-", "-"
 		for _, g := range grp.pins {
 			mod := g.ConfigModule()
-			if appCtx.Cfg.Get(mod, "STATUS") == "1" {
-				status = "enabled"
-				level, _ := strconv.Atoi(appCtx.Cfg.Get(mod, "PULL"))
-				pull = pullModeName(peripheral.PullMode(level))
-				drive = appCtx.Cfg.Get(mod, "DRIVE")
-				break
+			if !peripheral.HasPinSetting(appCtx.Cfg, mod) {
+				continue
 			}
+			if m, err := peripheral.ParsePullMode(appCtx.Cfg.Get(mod, "PULL")); err == nil {
+				pull = peripheral.PullModeName(m)
+			}
+			if v := appCtx.Cfg.Get(mod, "DRIVE"); v != "" {
+				drive = v
+			}
+			if v := appCtx.Cfg.Get(mod, "MODE"); v != "" {
+				mode = v
+			}
+			break
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", label, status, pull, drive)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", label, pull, drive, mode)
 	}
 	_ = w.Flush()
 }
