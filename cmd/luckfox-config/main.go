@@ -342,8 +342,8 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 	}
 
 	// GPIO pins exposed by the board pin diagram. Every pin is registered so
-	// it can be claimed from the GPIO menu; nothing is applied until the user
-	// enables a pin and its config key says STATUS=1.
+	// it can be configured from the GPIO menu; nothing is applied until the
+	// config carries a pin override for it.
 	for _, name := range board.DiagramPins(bc.PinDiagram) {
 		if rmio, err := board.ParseRMIO(name); err == nil {
 			reg.Register(peripheral.NewGPIO(rmio, deps))
@@ -355,6 +355,10 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 		}
 		reg.Register(g)
 	}
+
+	// Pin settings written by the "gpio" subcommands for pins the pin diagram
+	// does not expose. It replays every pin module no GPIO peripheral owns.
+	reg.Register(peripheral.NewPinReplay(deps, reg))
 
 	return reg
 }
