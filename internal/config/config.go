@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"syscall"
 )
@@ -110,6 +111,46 @@ func (s *Store) Delete(module, key string) error {
 		return s.flush()
 	}
 	return nil
+}
+
+// DeleteModule removes a module and every key in it from the store, so an
+// override that is no longer wanted leaves no empty module behind.
+func (s *Store) DeleteModule(module string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data[module]; !ok {
+		return nil
+	}
+	delete(s.data, module)
+	return s.flush()
+}
+
+// Modules returns the name of every module in the store, sorted.
+func (s *Store) Modules() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]string, 0, len(s.data))
+	for name := range s.data {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Module returns a copy of one module's key/value pairs, or nil when the module
+// does not exist.
+func (s *Store) Module(name string) map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m, ok := s.data[name]
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // flush rewrites the file. Caller must hold mu.
