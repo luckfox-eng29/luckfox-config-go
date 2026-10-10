@@ -53,6 +53,7 @@ type Deps struct {
 	ConfigMode    string // "rmio" or "normal"
 	PinctrlNaming string // "v1" or "v2"
 	SplitSPI      bool
+	Touch         board.TouchConfig // touch controller of the board, zero value when there is none
 }
 
 // MapRMIOToGPIO converts an RM_IO index to a raw GPIO number if the chip uses RM_IO.
