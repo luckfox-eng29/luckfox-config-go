@@ -195,12 +195,25 @@ nodetach
 		// Wait for module to disconnect
 		logger.Info("Waiting 5s for module to disconnect after PID switch")
 		time.Sleep(5 * time.Second)
+
+		// The PID switch makes the module re-enumerate its USB stack: the old
+		// ttyUSB nodes disappear and the new ones only show up when the
+		// usb-serial driver probes the re-enumerated device again. Dialing
+		// before that makes pppd open a dead port and exit immediately.
+		logger.Info("Waiting for USB device 9001")
+		if err := waitForUSBDevice(ctx, "9001", 30*time.Second); err != nil {
+			return err
+		}
 	}
 
 	logger.Info("Waiting for network interface wwan0")
 	if err := waitForNetInterface(ctx, "wwan0", 30*time.Second); err != nil {
 		return err
 	}
+
+	// The vendor script brings wwan0 up before dialing; pppd needs the module's
+	// network function to be active on some SIMCom firmwares.
+	_ = exec.Command("ip", "link", "set", "wwan0", "up").Run()
 
 	// Setup pppd runtime environment
 	_ = os.MkdirAll("/var/run/pppd/lock", 0o755)
@@ -213,15 +226,10 @@ nodetach
 	_ = os.Symlink("/etc/ppp/resolv.conf", "/etc/resolv.conf")
 
 	// Give it a moment as in shell script (sleep 10)
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	logger.Info("Starting pppd call simcom-pppd")
-	go func() {
-		// Run from /etc/ppp/peers as in shell script
-		cmd := exec.Command("pppd", "call", "simcom-pppd")
-		cmd.Dir = "/etc/ppp/peers"
-		_ = cmd.Run()
-	}()
+	go runPPPd()
 
 	return m.deps.Cfg.SetMulti("MODULE_4G", map[string]string{
 		"ENABLE": "1",
@@ -309,6 +317,25 @@ func waitForUSBDevice(ctx context.Context, pid string, timeout time.Duration) er
 		}
 	}
 	return fmt.Errorf("USB device %s not found within %s", pid, timeout)
+}
+
+// pppdLogPath mirrors the vendor script's /tmp/.pppd_log redirection so a
+// failed dial can still be diagnosed from the board.
+const pppdLogPath = "/tmp/.pppd_log"
+
+// runPPPd starts pppd in the background and records its output. pppd exits as
+// soon as it cannot open the serial port or the chat script fails, so without
+// capturing the output a failed dial is completely silent.
+func runPPPd() {
+	cmd := exec.Command("pppd", "call", "simcom-pppd")
+	cmd.Dir = "/etc/ppp/peers"
+	if logFile, err := os.OpenFile(pppdLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	}
+	if err := cmd.Run(); err != nil {
+		logger.Error("pppd exited", "err", err, "log", pppdLogPath)
+	}
 }
 
 func waitForNetInterface(ctx context.Context, iface string, timeout time.Duration) error {
