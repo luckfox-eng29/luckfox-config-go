@@ -48,3 +48,32 @@ func WriteReg32(addr uint32, value uint32) error {
 	atomic.StoreUint32(p, value)
 	return nil
 }
+
+// ReadReg32 reads a 32-bit value from a physical hardware register via /dev/mem.
+// Requires CAP_SYS_RAWIO (root). addr must be 4-byte aligned. The prologue is
+// intentionally the same as WriteReg32 so both share the same mapping flags.
+func ReadReg32(addr uint32) (uint32, error) {
+	pageBase := addr &^ uint32(devMemPageSize-1)
+	pageOff := addr & uint32(devMemPageSize-1)
+
+	f, err := os.OpenFile("/dev/mem", os.O_RDWR|os.O_SYNC, 0)
+	if err != nil {
+		return 0, fmt.Errorf("open /dev/mem: %w", err)
+	}
+	defer f.Close()
+
+	data, err := syscall.Mmap(
+		int(f.Fd()),
+		int64(pageBase),
+		devMemPageSize,
+		syscall.PROT_READ|syscall.PROT_WRITE,
+		syscall.MAP_SHARED,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("mmap 0x%x: %w", pageBase, err)
+	}
+	defer syscall.Munmap(data) //nolint:errcheck
+
+	p := (*uint32)(unsafe.Pointer(&data[pageOff]))
+	return atomic.LoadUint32(p), nil
+}
