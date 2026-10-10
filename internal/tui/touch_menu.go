@@ -21,7 +21,7 @@ func newTouchMenu(appCtx *AppContext) ListMenuModel {
 		{Label: "Enable", Value: "enable"},
 		{Label: "Disable", Value: "disable"},
 	}
-	return NewListMenu("TouchScreen Configuration", items, func(item MenuItem) tea.Cmd {
+	return NewListMenu("TP Configuration", items, func(item MenuItem) tea.Cmd {
 		ts := getTouchscreenPeripheral(appCtx)
 		if ts == nil {
 			return Status("TouchScreen peripheral not available", true)

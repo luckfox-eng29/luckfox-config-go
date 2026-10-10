@@ -251,15 +251,19 @@ func (t PanelTouch) hasValues() bool {
 	return t.SizeX > 0 || t.SizeY > 0 || t.InvertedX || t.InvertedY || t.SwappedXY
 }
 
-// GetResolution returns the configured panel resolution from the device tree.
-func (d *DSI) GetResolution() (string, string) {
-	if d.deps.Static == nil {
-		return "", ""
+// GetPanelName returns the display name of the panel selected in the config
+// store, or an empty string when no panel has been configured.
+func (d *DSI) GetPanelName() string {
+	family := d.deps.Cfg.Get("DSI", "TYPE")
+	id := d.deps.Cfg.Get("DSI", "SIZE")
+	if family == "" || id == "" {
+		return ""
 	}
-	node := d.fdtNode + "/panel@0/display-timings/timing0"
-	h, _ := d.deps.Static.GetProperty(node, "hactive")
-	v, _ := d.deps.Static.GetProperty(node, "vactive")
-	return h, v
+	panel, err := FindPanel(d.families, family, id)
+	if err != nil {
+		return ""
+	}
+	return panel.DisplayName
 }
 
 // SetLogoRotate sets the display logo rotation (angle: 0, 90, 180, 270).

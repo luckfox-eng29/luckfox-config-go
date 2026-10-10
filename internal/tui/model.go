@@ -124,6 +124,12 @@ func (a AppModel) Init() tea.Cmd {
 func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		// Serial consoles may answer the size query with 0x0. Overwriting the
+		// 80x24 defaults set in New() with that would turn padScreen into a
+		// no-op, leaving characters from the previous frame on screen.
+		if msg.Width <= 0 || msg.Height <= 0 {
+			return a, nil
+		}
 		a.width, a.height = msg.Width, msg.Height
 		// Fall through to delegate to top model
 	case NavigatePushMsg:
@@ -133,12 +139,20 @@ func (a AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case NavigatePopMsg:
 		if len(a.stack) > 1 {
 			a.stack = a.stack[:len(a.stack)-1]
-			// Clear message on main menu when returning to it
-			if len(a.stack) == 1 {
-				if mm, ok := a.stack[0].(ListMenuModel); ok {
+			// Regenerate the menu we return to so its labels reflect changes made
+			// in the sub-menu (e.g. a disabled PWM now reads as disabled) instead
+			// of showing the snapshot taken when the sub-menu was entered.
+			if mm, ok := a.stack[len(a.stack)-1].(ListMenuModel); ok {
+				if len(a.stack) == 1 {
 					mm.SetMessage("", false)
-					a.stack[0] = mm
 				}
+				if mm.refreshItems != nil {
+					mm.items = mm.refreshItems()
+					if mm.cursor >= len(mm.items) {
+						mm.cursor = 0
+					}
+				}
+				a.stack[len(a.stack)-1] = mm
 			}
 		} else {
 			return a, tea.Quit
@@ -224,18 +238,14 @@ func newMainMenu(appCtx *AppContext) ListMenuModel {
 
 		if appCtx.Board.Features.DSIFDTNode != "" {
 			label := "MIPI DSI"
-			if p, err := appCtx.Registry.Get("dsi"); err == nil && p.IsActive() {
+			if p, err := appCtx.Registry.Get("dsi"); err == nil {
 				if dsi, ok := p.(*peripheral.DSI); ok {
-					h, v := dsi.GetResolution()
-					if h != "" && v != "" {
-						label += fmt.Sprintf(" (%sx%s)", h, v)
+					if name := dsi.GetPanelName(); name != "" {
+						label += fmt.Sprintf(" (%s)", name)
 					}
 				}
 			}
 			items = append(items, MenuItem{Label: label, Value: "dsi"})
-		}
-		if appCtx.Board.Features.Touch.Bus != "" {
-			addWithCheck("TouchScreen", "ts", "touchscreen")
 		}
 		if appCtx.Board.Features.Has4GModule {
 			label := "LTE Module (4G)"
@@ -269,8 +279,6 @@ func newMainMenu(appCtx *AppContext) ListMenuModel {
 			return NavigatePush(newAdvancedMenu(appCtx))
 		case "dsi":
 			return NavigatePush(newDSIMenu(appCtx))
-		case "ts":
-			return NavigatePush(newTouchMenu(appCtx))
 		case "4g":
 			return NavigatePush(newModule4GMenu(appCtx))
 		case "apps":
@@ -312,6 +320,9 @@ func newAdvancedMenu(appCtx *AppContext) ListMenuModel {
 	if appCtx.Board.Features.HasRGB {
 		items = append(items, MenuItem{Label: "RGB", Value: "rgb"})
 	}
+	if appCtx.Board.Features.Touch.Bus != "" {
+		items = append(items, MenuItem{Label: "TP", Value: "ts"})
+	}
 	if appCtx.Board.Features.HasSDMMC {
 		items = append(items, MenuItem{Label: "SDMMC", Value: "sdmmc"})
 	}
@@ -334,6 +345,8 @@ func newAdvancedMenu(appCtx *AppContext) ListMenuModel {
 			return NavigatePush(newCSIMenu(appCtx))
 		case "rgb":
 			return NavigatePush(newRGBMenu(appCtx))
+		case "ts":
+			return NavigatePush(newTouchMenu(appCtx))
 		case "sdmmc":
 			return NavigatePush(newSDMMCMenu(appCtx))
 		}
