@@ -159,14 +159,17 @@ func (u *UART) Disable(ctx context.Context) error {
 
 	if strings.ToLower(u.deps.ConfigMode) == "rmio" {
 		if u.txPin >= 0 {
-			_ = ResetPinMode(u.deps.Chip, u.deps.MapRMIOToGPIO(u.txPin))
+			_ = ResetPinModeIfMode7(u.deps.Chip, u.deps.MapRMIOToGPIO(u.txPin))
 			u.deps.Diagram.MarkPin(board.RMIOName(u.txPin), false)
 		}
 		if u.rxPin >= 0 {
-			_ = ResetPinMode(u.deps.Chip, u.deps.MapRMIOToGPIO(u.rxPin))
+			_ = ResetPinModeIfMode7(u.deps.Chip, u.deps.MapRMIOToGPIO(u.rxPin))
 			u.deps.Diagram.MarkPin(board.RMIOName(u.rxPin), false)
 		}
 		u.txPin, u.rxPin = -1, -1
+
+		// Drop the device node, same as the shell script.
+		_ = os.Remove(fmt.Sprintf("/dev/ttyS%d", u.num))
 
 		logger.Info("UART disabled", "num", u.num)
 		return u.deps.Cfg.Set(fmt.Sprintf("UART%d", u.num), "STATUS", "0")

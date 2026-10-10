@@ -198,11 +198,13 @@ func (c *I2C) Disable(ctx context.Context) error {
 
 	if strings.ToLower(c.deps.ConfigMode) == "rmio" {
 		if c.sdaPin >= 0 {
-			_ = ResetPinMode(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sdaPin))
+			_ = ResetPinModeIfMode7(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sdaPin))
+			_ = SetPull(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sdaPin), PullNone)
 			c.deps.Diagram.MarkPin(board.RMIOName(c.sdaPin), false)
 		}
 		if c.sclPin >= 0 {
-			_ = ResetPinMode(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sclPin))
+			_ = ResetPinModeIfMode7(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sclPin))
+			_ = SetPull(c.deps.Chip, c.deps.MapRMIOToGPIO(c.sclPin), PullNone)
 			c.deps.Diagram.MarkPin(board.RMIOName(c.sclPin), false)
 		}
 		c.sdaPin, c.sclPin = -1, -1

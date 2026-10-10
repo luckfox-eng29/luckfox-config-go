@@ -160,13 +160,13 @@ func (c *CAN) Disable(ctx context.Context) error {
 	if strings.ToLower(c.deps.ConfigMode) == "rmio" {
 		if c.txPin >= 0 {
 			gpio := c.deps.MapRMIOToGPIO(c.txPin)
-			_ = ResetPinMode(c.deps.Chip, gpio)
+			_ = ResetPinModeIfMode7(c.deps.Chip, gpio)
 			_ = SetPull(c.deps.Chip, gpio, PullNone)
 			c.deps.Diagram.MarkPin(board.RMIOName(c.txPin), false)
 		}
 		if c.rxPin >= 0 {
 			gpio := c.deps.MapRMIOToGPIO(c.rxPin)
-			_ = ResetPinMode(c.deps.Chip, gpio)
+			_ = ResetPinModeIfMode7(c.deps.Chip, gpio)
 			_ = SetPull(c.deps.Chip, gpio, PullNone)
 			c.deps.Diagram.MarkPin(board.RMIOName(c.rxPin), false)
 		}

@@ -188,7 +188,7 @@ func (s *SPI) Disable(ctx context.Context) error {
 	if strings.ToLower(s.deps.ConfigMode) == "rmio" {
 		for _, pin := range s.PinsUsed() {
 			gpio := s.deps.MapRMIOToGPIO(pin)
-			_ = ResetPinMode(s.deps.Chip, gpio)
+			_ = ResetPinModeIfMode7(s.deps.Chip, gpio)
 			_ = SetDriveStrength(s.deps.Chip, gpio, 2)
 			s.deps.Diagram.MarkPin(board.RMIOName(pin), false)
 		}

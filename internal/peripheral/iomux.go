@@ -30,3 +30,17 @@ func GetPinMode(c chip.Chip, gpio int) (int, error) {
 func ResetPinMode(c chip.Chip, gpio int) error {
 	return SetPinMode(c, gpio, 0)
 }
+
+// ResetPinModeIfMode7 resets a pin to GPIO mode (0) only when its current
+// iomux mode is 7. Mirrors the shell scripts' disable logic, which only
+// touches pins that were left in mode 7.
+func ResetPinModeIfMode7(c chip.Chip, gpio int) error {
+	mode, err := GetPinMode(c, gpio)
+	if err != nil {
+		return err
+	}
+	if mode == 7 {
+		return SetPinMode(c, gpio, 0)
+	}
+	return nil
+}
