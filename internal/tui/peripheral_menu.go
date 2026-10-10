@@ -323,7 +323,10 @@ func newUARTActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel 
 		if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
 			return NavigatePush(newPinInputForm(
 				fmt.Sprintf("UART%d — Enter pin numbers", n),
-				[]string{"TX RM_IO pin (0-31)", "RX RM_IO pin (0-31)"},
+				[]pinField{
+					newField("TX RM_IO pin", "0-31", pinRange("TX RM_IO pin")),
+					newField("RX RM_IO pin", "0-31", pinRange("RX RM_IO pin")),
+				},
 				func(values []string) tea.Cmd {
 					tx, err1 := strconv.Atoi(strings.TrimSpace(values[0]))
 					rx, err2 := strconv.Atoi(strings.TrimSpace(values[1]))
@@ -408,7 +411,11 @@ func newI2CActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 		if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
 			return NavigatePush(newPinInputForm(
 				fmt.Sprintf("I2C%d — Enter pin numbers", n),
-				[]string{"SDA RM_IO pin (0-31)", "SCL RM_IO pin (0-31)", "Speed Hz (default 100000)"},
+				[]pinField{
+					newField("SDA RM_IO pin", "0-31", pinRange("SDA RM_IO pin")),
+					newField("SCL RM_IO pin", "0-31", pinRange("SCL RM_IO pin")),
+					newField("Speed Hz", "default 100000", numberOnly("Speed Hz")),
+				},
 				func(values []string) tea.Cmd {
 					sda, e1 := strconv.Atoi(strings.TrimSpace(values[0]))
 					scl, e2 := strconv.Atoi(strings.TrimSpace(values[1]))
@@ -433,7 +440,7 @@ func newI2CActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 		// Non-RMIO mode: ask for speed then enable
 		return NavigatePush(newPinInputForm(
 			fmt.Sprintf("I2C%d — Enter parameters", n),
-			[]string{"Speed Hz (default 100000)"},
+			[]pinField{newField("Speed Hz", "default 100000", numberOnly("Speed Hz"))},
 			func(values []string) tea.Cmd {
 				speed := 100000
 				if s := strings.TrimSpace(values[0]); s != "" {
@@ -510,7 +517,13 @@ func newSPIActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 		if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
 			return NavigatePush(newPinInputForm(
 				fmt.Sprintf("SPI%d — Enter pin numbers", n),
-				[]string{"SCLK RM_IO (0-31)", "MOSI RM_IO (0-31)", "MISO RM_IO (0-31 or -)", "CS RM_IO (0-31 or -)", "Speed Hz (default 10000000)"},
+				[]pinField{
+					newField("SCLK RM_IO", "0-31", pinRange("SCLK RM_IO")),
+					newField("MOSI RM_IO", "0-31", pinRange("MOSI RM_IO")),
+					newField("MISO RM_IO", "0-31 or -", pinRangeOrDash("MISO RM_IO")),
+					newField("CS RM_IO", "0-31 or -", pinRangeOrDash("CS RM_IO")),
+					newField("Speed Hz", "default 10000000", numberOnly("Speed Hz")),
+				},
 				func(values []string) tea.Cmd {
 					sclk, e1 := strconv.Atoi(strings.TrimSpace(values[0]))
 					mosi, e2 := strconv.Atoi(strings.TrimSpace(values[1]))
@@ -620,7 +633,11 @@ func newCANActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 		if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
 			return NavigatePush(newPinInputForm(
 				fmt.Sprintf("CAN%d — Enter pin numbers", n),
-				[]string{"TX RM_IO (0-31)", "RX RM_IO (0-31)", "Clock rate Hz (default 300000000)"},
+				[]pinField{
+					newField("TX RM_IO", "0-31", pinRange("TX RM_IO")),
+					newField("RX RM_IO", "0-31", pinRange("RX RM_IO")),
+					newField("Clock rate Hz", "default 300000000", numberOnly("Clock rate Hz")),
+				},
 				func(values []string) tea.Cmd {
 					tx, e1 := strconv.Atoi(strings.TrimSpace(values[0]))
 					rx, e2 := strconv.Atoi(strings.TrimSpace(values[1]))
@@ -645,7 +662,7 @@ func newCANActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 		// Non-RMIO mode: ask for speed then enable
 		return NavigatePush(newPinInputForm(
 			fmt.Sprintf("CAN%d — Enter parameters", n),
-			[]string{"Clock rate Hz (default 300000000)"},
+			[]pinField{newField("Clock rate Hz", "default 300000000", numberOnly("Clock rate Hz"))},
 			func(values []string) tea.Cmd {
 				speed := 300000000
 				if s := strings.TrimSpace(values[0]); s != "" {
@@ -735,10 +752,79 @@ func newFBTFTMenu(appCtx *AppContext) ListMenuModel {
 
 // ─── Pin Input Form ───────────────────────────────────────────────────────────
 
-// pinInputForm is a multi-field text input screen.
+// pinField is one row of a pinInputForm: a static label, a hint shown while
+// the field is empty, and an optional validator. An empty value always passes
+// because every call site treats it as "keep the built-in default".
+type pinField struct {
+	Label    string
+	Hint     string
+	Validate func(string) error
+}
+
+func newField(label, hint string, validate func(string) error) pinField {
+	return pinField{Label: label, Hint: hint, Validate: validate}
+}
+
+// pinRange validates an optional RM_IO pin number.
+func pinRange(label string) func(string) error {
+	return func(v string) error {
+		if v == "" {
+			return nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("%s: digits only", label)
+		}
+		if n < 0 || n > 31 {
+			return fmt.Errorf("%s: must be 0-31", label)
+		}
+		return nil
+	}
+}
+
+// pinRangeOrDash additionally accepts "-", meaning the pin is not used.
+func pinRangeOrDash(label string) func(string) error {
+	base := pinRange(label)
+	return func(v string) error {
+		if v == "-" {
+			return nil
+		}
+		return base(v)
+	}
+}
+
+// numberOnly validates an optional decimal value.
+func numberOnly(label string) func(string) error {
+	return func(v string) error {
+		if v == "" {
+			return nil
+		}
+		if _, err := strconv.Atoi(v); err != nil {
+			return fmt.Errorf("%s: digits only", label)
+		}
+		return nil
+	}
+}
+
+// bitFlag validates an optional 1/0 flag.
+func bitFlag(label string) func(string) error {
+	return func(v string) error {
+		if v == "" || v == "0" || v == "1" {
+			return nil
+		}
+		return fmt.Errorf("%s: must be 0 or 1", label)
+	}
+}
+
+// pinInputForm is a multi-field text input screen. Labels are rendered as a
+// static column so the field names stay visible while typing, and rejected
+// edits are reported inline instead of surfacing as a late submit error.
 type pinInputForm struct {
 	title     string
+	fields    []pinField
 	inputs    []textinput.Model
+	errs      []string
+	labelW    int
 	focused   int
 	onSubmit  func(values []string) tea.Cmd
 	message   string
@@ -748,13 +834,17 @@ type pinInputForm struct {
 	spinner   spinner.Model
 }
 
-func newPinInputForm(title string, labels []string, onSubmit func([]string) tea.Cmd) pinInputForm {
-	inputs := make([]textinput.Model, len(labels))
-	for i, label := range labels {
+func newPinInputForm(title string, fields []pinField, onSubmit func([]string) tea.Cmd) pinInputForm {
+	inputs := make([]textinput.Model, len(fields))
+	labelW := 0
+	for i, f := range fields {
 		t := textinput.New()
-		t.Placeholder = label
-		t.CharLimit = 12
+		t.Placeholder = f.Hint
+		t.CharLimit = 24
 		inputs[i] = t
+		if w := len(f.Label); w > labelW {
+			labelW = w
+		}
 	}
 	inputs[0].Focus()
 
@@ -764,7 +854,10 @@ func newPinInputForm(title string, labels []string, onSubmit func([]string) tea.
 
 	return pinInputForm{
 		title:    title,
+		fields:   fields,
 		inputs:   inputs,
+		errs:     make([]string, len(fields)),
+		labelW:   labelW,
 		onSubmit: onSubmit,
 		spinner:  s,
 	}
@@ -828,10 +921,25 @@ func (f pinInputForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update focused input
+	// Edit the focused field, then revert the change if it fails validation.
+	prev := f.inputs[f.focused].Value()
 	var cmd tea.Cmd
 	f.inputs[f.focused], cmd = f.inputs[f.focused].Update(msg)
+	f.validate(f.focused, prev)
 	return f, cmd
+}
+
+// validate re-runs the focused field's validator. A rejected edit is rolled
+// back and reported inline, so invalid input never reaches the submit handler.
+func (f *pinInputForm) validate(i int, prev string) {
+	f.errs[i] = ""
+	if f.fields[i].Validate == nil {
+		return
+	}
+	if err := f.fields[i].Validate(strings.TrimSpace(f.inputs[i].Value())); err != nil {
+		f.inputs[i].SetValue(prev)
+		f.errs[i] = err.Error()
+	}
 }
 
 func (f pinInputForm) View() string {
@@ -839,11 +947,17 @@ func (f pinInputForm) View() string {
 	sb.WriteString(titleStyle.Render(f.title))
 	sb.WriteByte('\n')
 	for i, inp := range f.inputs {
-		prefix := "  "
+		marker := "  "
+		label := normalStyle.Render(f.fields[i].Label)
 		if i == f.focused {
-			prefix = "> "
+			marker = selectedStyle.Render("> ")
+			label = selectedStyle.Render(f.fields[i].Label)
 		}
-		sb.WriteString(prefix + inp.View() + "\n")
+		gap := strings.Repeat(" ", f.labelW-len(f.fields[i].Label)+2)
+		sb.WriteString(marker + label + gap + inp.View() + "\n")
+		if f.errs[i] != "" {
+			sb.WriteString("  " + strings.Repeat(" ", f.labelW+2) + errorStyle.Render("✗ "+f.errs[i]) + "\n")
+		}
 	}
 	if f.message != "" {
 		sb.WriteByte('\n')

@@ -94,7 +94,7 @@ func newModule4GAPNMenu(appCtx *AppContext) ListMenuModel {
 		}
 		return NavigatePush(newPinInputForm(
 			"Enter custom APN",
-			[]string{"APN string"},
+			[]pinField{newField("APN string", "e.g. 3gnet", nil)},
 			func(values []string) tea.Cmd {
 				apn := strings.TrimSpace(values[0])
 				if apn == "" {
