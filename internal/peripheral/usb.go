@@ -48,7 +48,13 @@ func (u *USB) Disable(ctx context.Context) error {
 	return u.applyMode("peripheral")
 }
 
+// validUSBModes are the dr_mode values the USB controller accepts.
+var validUSBModes = map[string]bool{"peripheral": true, "host": true}
+
 func (u *USB) applyMode(mode string) error {
+	if !validUSBModes[mode] {
+		return fmt.Errorf("invalid USB mode %q: must be peripheral or host", mode)
+	}
 	if u.deps.Static == nil {
 		return fmt.Errorf("static overlay not available")
 	}

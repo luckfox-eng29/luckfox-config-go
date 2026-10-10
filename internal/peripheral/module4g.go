@@ -54,6 +54,16 @@ func (m *Module4G) GetMode() string {
 }
 
 func (m *Module4G) Enable(ctx context.Context) error {
+	// The 4G module hangs off the USB bus, so the SoC must act as a USB
+	// host; in peripheral (device) mode the module is not visible at all.
+	// An unset USB mode means the peripheral default.
+	usbMode := m.deps.Cfg.Get("USB", "MODE")
+	if usbMode == "" {
+		usbMode = "peripheral"
+	}
+	if usbMode != "host" {
+		return fmt.Errorf("USB is in %s mode, 4G module needs USB host mode: set USB to host first", usbMode)
+	}
 	mode := m.deps.Cfg.GetDefault("MODULE_4G", "MODE", "ndis")
 	apn := m.deps.Cfg.GetDefault("MODULE_4G", "APN", "")
 	return m.apply(ctx, mode, apn)
