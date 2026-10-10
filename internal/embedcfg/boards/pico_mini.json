@@ -39,6 +39,6 @@
     "i2c": ["3_M1"],
     "spi": ["0_M0"],
     "pwm": ["1_M0", "2_M2", "11_M1", "4_M2", "10_M1", "5_M2", "11_M2", "6_M2", "0_M1", "8_M1", "10_M2", "9_M1", "3_M2"],
-    "compatible_apps": ["Pico_ePaper", "OLED_Module", "DHT11"]
+    "compatible_apps": []
   }
 }

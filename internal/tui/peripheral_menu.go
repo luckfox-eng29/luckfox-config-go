@@ -716,13 +716,19 @@ func newCANActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 func newCompatibleAppMenu(appCtx *AppContext) ListMenuModel {
 	refresh := func() []MenuItem {
 		var items []MenuItem
-		for _, name := range appCtx.Board.Peripherals.CompatibleApps {
-			label := name
-			id := "app_" + name
-			if p, err := appCtx.Registry.Get(id); err == nil && p.IsActive() {
-				label += " (Enabled)"
+		for _, app := range appCtx.Board.Peripherals.CompatibleApps {
+			label := app.Name
+			// Mark the entry only when the app is up and correct: its interfaces
+			// are active, its dependency pins are free and its declared pulls
+			// are in force.
+			if p, err := appCtx.Registry.Get("app_" + app.Name); err == nil {
+				if a, ok := p.(*peripheral.CompatibleApp); ok {
+					if a.Ready() {
+						label += " (Ready)"
+					}
+				}
 			}
-			items = append(items, MenuItem{Label: label, Value: name})
+			items = append(items, MenuItem{Label: label, Value: app.Name})
 		}
 		return items
 	}
@@ -735,7 +741,7 @@ func newCompatibleAppMenu(appCtx *AppContext) ListMenuModel {
 func newCompatibleAppActionMenu(appCtx *AppContext, name string) ListMenuModel {
 	items := []MenuItem{
 		{Label: "Enable", Value: "enable"},
-		{Label: "Disable", Value: "disable"},
+		{Label: "Check", Value: "check"},
 	}
 	return NewListMenu(name, items, func(item MenuItem) tea.Cmd {
 		id := "app_" + name
@@ -743,16 +749,18 @@ func newCompatibleAppActionMenu(appCtx *AppContext, name string) ListMenuModel {
 		if err != nil {
 			return Status(err.Error(), true)
 		}
-		if item.Value == "enable" {
-			if err := p.Enable(appCtx.Ctx); err != nil {
-				return Status(err.Error(), true)
+		if item.Value == "check" {
+			app, ok := p.(*peripheral.CompatibleApp)
+			if !ok {
+				return Status("not a compatible app", true)
 			}
-			return Loading(fmt.Sprintf("%s enabled", name), 500*time.Millisecond)
+			msg, free := app.Check()
+			return Status(msg, !free)
 		}
-		if err := p.Disable(appCtx.Ctx); err != nil {
+		if err := p.Enable(appCtx.Ctx); err != nil {
 			return Status(err.Error(), true)
 		}
-		return Loading(fmt.Sprintf("%s disabled", name), 500*time.Millisecond)
+		return Loading(fmt.Sprintf("%s enabled", name), 500*time.Millisecond)
 	})
 }
 

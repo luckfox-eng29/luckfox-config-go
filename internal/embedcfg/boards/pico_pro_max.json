@@ -48,7 +48,50 @@
     "i2c": ["1_M1", "3_M0", "3_M1"],
     "spi": ["0_M0"],
     "pwm": ["11_M1", "10_M1", "9_M1", "8_M1", "0_M1", "11_M2", "6_M1", "2_M2", "4_M2", "5_M2", "6_M2", "5_M1", "3_M2", "10_M2"],
-    "compatible_apps": ["Pico_LCD", "Pico_ePaper", "Pico_UPS_B", "Pico_ResTouch_LCD", "OLED_Module", "Pico_OLED", "DHT11"],
+    "compatible_apps": [
+      {
+        "name": "Pico_LCD",
+        "spi": {"cs": true, "miso": false},
+        "enable": ["spi0m0"],
+        "check": ["pwm11m1", "pwm10m1", "pwm0m0", "pwm2m2", "pwm4m2", "pwm5m2", "pwm6m2", "pwm1m0", "pwm10m2", "uart3m1", "uart1m1", "i2c4m0"],
+        "gpio": [{"pin": "GPIO1_C6", "pull": "up"}, {"pin": "GPIO1_C7", "pull": "up"}, {"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO2_A4", "pull": "up"}, {"pin": "GPIO2_A5", "pull": "up"}, {"pin": "GPIO2_A0", "pull": "up"}, {"pin": "GPIO2_A2", "pull": "up"}]
+      },
+      {
+        "name": "Pico_ePaper",
+        "spi": {"cs": true, "miso": false},
+        "enable": ["spi0m0"],
+        "check": ["pwm0m0", "pwm2m2", "pwm4m2", "pwm5m2", "pwm6m2", "pwm1m0"]
+      },
+      {
+        "name": "Pico_UPS_B",
+        "enable": ["i2c3m1"],
+        "check": ["pwm0m1", "pwm11m2"]
+      },
+      {
+        "name": "Pico_ResTouch_LCD",
+        "spi": {"cs": false, "miso": true},
+        "enable": ["spi0m0"],
+        "check": ["pwm8m1", "pwm0m0", "pwm2m2", "pwm1m0", "pwm10m2", "uart3m1", "uart4m1", "uart1m1", "i2c4m0", "i2c3m0"],
+        "gpio": [{"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO2_A5", "pull": "up"}]
+      },
+      {
+        "name": "OLED_Module",
+        "spi": {"cs": false, "miso": false},
+        "enable": ["spi0m0", "i2c3m1"],
+        "check": ["pwm11m1", "pwm10m1", "pwm8m1", "pwm0m1", "pwm11m2", "pwm4m2", "pwm5m2", "uart4m1"]
+      },
+      {
+        "name": "Pico_OLED",
+        "spi": {"cs": false, "miso": false},
+        "enable": ["spi0m0", "i2c3m1"],
+        "check": ["uart3m1", "pwm0m0", "pwm0m1", "pwm11m2", "uart1m1"]
+      },
+      {
+        "name": "DHT11",
+        "check": ["pwm11m1"],
+        "nodes": [{"path": "/dht11_sensor", "status": "okay"}]
+      }
+    ],
     "fbtft": {
       "gpio": ["GPIO2_B1", "GPIO2_B0", "GPIO1_C3"],
       "spi": ["SPI0_M0_CS0", "SPI0_M0_CLK", "SPI0_M0_MOSI"]

@@ -92,13 +92,52 @@ type FBTFTPins struct {
 }
 
 type PeripheralSet struct {
-	UART           []string  `json:"uart"`
-	I2C            []string  `json:"i2c"`
-	SPI            []string  `json:"spi"`
-	CAN            []string  `json:"can"`
-	PWM            []string  `json:"pwm"`
-	CompatibleApps []string  `json:"compatible_apps"`
-	FBTFT          FBTFTPins `json:"fbtft"`
+	UART           []string            `json:"uart"`
+	I2C            []string            `json:"i2c"`
+	SPI            []string            `json:"spi"`
+	CAN            []string            `json:"can"`
+	PWM            []string            `json:"pwm"`
+	CompatibleApps []CompatibleAppSpec `json:"compatible_apps"`
+	FBTFT          FBTFTPins           `json:"fbtft"`
+}
+
+// CompatibleAppSpec describes a preset hardware combination (e.g. DHT11,
+// Pico_LCD) on a specific board.
+//
+//   - Check lists peripheral IDs whose physical pins must be free (occupancy
+//     check only; no hardware action is performed at enable time).
+//   - Enable lists real peripherals to turn on through the regular registry
+//     path (conflict check + pin marking + config persistence).
+//   - GPIO applies pin pulls and Nodes toggles device-tree node status.
+//   - SPI narrows the SPI0 signal set on boards with split_spi; when omitted the
+//     interactive default (CS0 and MISO both claimed) is kept.
+type CompatibleAppSpec struct {
+	Name   string       `json:"name"`
+	Enable []string     `json:"enable,omitempty"`
+	Check  []string     `json:"check,omitempty"`
+	GPIO   []GPIOAction `json:"gpio,omitempty"`
+	Nodes  []NodeAction `json:"nodes,omitempty"`
+	SPI    *SPISignals  `json:"spi,omitempty"`
+}
+
+// SPISignals selects which of the splittable SPI0 signals a compatible app
+// claims. It mirrors the cs/miso arguments of the shell's `luckfox_spi_app`, so
+// an app that has no use for MISO does not claim that pin.
+type SPISignals struct {
+	CS   bool `json:"cs"`
+	MISO bool `json:"miso"`
+}
+
+// GPIOAction is a single pin-level operation performed by a compatible app.
+type GPIOAction struct {
+	Pin  string `json:"pin"`            // e.g. "GPIO1_C6"
+	Pull string `json:"pull,omitempty"` // "up", "down" or "none"
+}
+
+// NodeAction toggles the status of an arbitrary device-tree node.
+type NodeAction struct {
+	Path   string `json:"path"`   // e.g. "/dht11_sensor"
+	Status string `json:"status"` // "okay" or "disabled"
 }
 
 // PWMConfig is no longer used but kept for a moment if needed for migration logic.

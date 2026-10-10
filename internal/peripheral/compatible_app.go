@@ -9,6 +9,8 @@ package peripheral
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"luckfox-config/internal/board"
 	"luckfox-config/internal/config"
@@ -16,383 +18,308 @@ import (
 )
 
 // CompatibleApp represents a preset hardware combination (e.g. DHT11, Pico_LCD).
-// Each app orchestrates multiple sub-peripheral DTS overlays based on the board model.
+//
+// Unlike other peripherals it does not own any config keys. Enabling it simply
+// (1) checks that its declared pins are free, (2) turns on the real peripherals
+// it needs through the regular registry path, and (3) applies pin pulls and
+// device-tree node toggles. Pins that are only "declared" (no hardware action)
+// are checked for occupancy but never physically released.
 type CompatibleApp struct {
-	name    string
+	spec    board.CompatibleAppSpec
 	boardID string
 	deps    Deps
+	reg     *Registry
 }
 
-func NewCompatibleApp(name, boardID string, deps Deps) *CompatibleApp {
-	return &CompatibleApp{name: name, boardID: boardID, deps: deps}
+func NewCompatibleApp(spec board.CompatibleAppSpec, boardID string, deps Deps, reg *Registry) *CompatibleApp {
+	return &CompatibleApp{spec: spec, boardID: boardID, deps: deps, reg: reg}
 }
 
-func (c *CompatibleApp) ID() string { return "app_" + c.name }
+func (c *CompatibleApp) ID() string { return "app_" + c.spec.Name }
+
+// IsActive is derived: every real peripheral the app enables must be active and
+// every enabled node must be okay. Apps without any of those are never active.
 func (c *CompatibleApp) IsActive() bool {
-	// Check for a representative overlay or hardware node for each app
-	switch c.name {
-	case "DHT11":
-		return IsNodeEnabled("/dht11_sensor")
-	case "Pico_ePaper", "OLED_Module", "Pico_OLED", "Pico_LCD", "Pico_ResTouch_LCD":
-		// These all use SPI0. Check if SPI0 is enabled.
-		return Exists("/dev/spidev0.*")
-	case "Pico_UPS_B":
-		// Uses I2C3.
-		return Exists("/dev/i2c-3")
+	if len(c.spec.Enable) == 0 && len(c.spec.Nodes) == 0 {
+		return false
 	}
-	return false
+	for _, id := range c.spec.Enable {
+		p, err := c.reg.Get(id)
+		if err != nil || !p.IsActive() {
+			return false
+		}
+	}
+	for _, n := range c.spec.Nodes {
+		if n.Status == "okay" && !IsNodeEnabled(n.Path) {
+			return false
+		}
+	}
+	return true
 }
 
+// IsConfigEnabled is derived from the sub-peripherals the app depends on.
 func (c *CompatibleApp) IsConfigEnabled(cfg *config.Store) bool {
-	return cfg.Get("APP_"+c.name, "STATUS") == "1"
+	if len(c.spec.Enable) == 0 {
+		return false
+	}
+	for _, id := range c.spec.Enable {
+		p, err := c.reg.Get(id)
+		if err != nil || !p.IsConfigEnabled(cfg) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *CompatibleApp) PinsUsed() []int { return nil }
 
-func (c *CompatibleApp) ConfigKeys() []string {
-	return []string{"APP_" + c.name + "_STATUS"}
-}
+func (c *CompatibleApp) ConfigKeys() []string { return nil }
 
+// Enable checks pin occupancy, then enables the app's real peripherals and
+// applies its pin pulls / node toggles.
 func (c *CompatibleApp) Enable(ctx context.Context) error {
-	var err error
-	switch c.name {
-	case "DHT11":
-		err = c.enableDHT11()
-	case "Pico_ePaper":
-		err = c.enablePicoEPaper()
-	case "Pico_UPS_B":
-		err = c.enablePicoUPSB()
-	case "OLED_Module":
-		err = c.enableOLEDModule()
-	case "Pico_OLED":
-		err = c.enablePicoOLED()
-	case "Pico_LCD":
-		err = c.enablePicoLCD()
-	case "Pico_ResTouch_LCD":
-		err = c.enablePicoResTouchLCD()
-	default:
-		return fmt.Errorf("compatible app %q: not implemented", c.name)
-	}
-	if err != nil {
+	if err := c.deps.Diagram.CheckConflictErrExcluding(c.requiredTokens(), c.claimedTokens()); err != nil {
 		return err
 	}
-	logger.Info("Compatible app enabled", "name", c.name, "board", c.boardID)
-	return c.deps.Cfg.Set("APP_"+c.name, "STATUS", "1")
-}
 
-func (c *CompatibleApp) Disable(ctx context.Context) error {
-	if c.name == "DHT11" {
-		if err := c.applyNode("dht11", "/dht11_sensor", "disabled"); err != nil {
-			return err
+	c.applySPISignals()
+
+	for _, id := range c.spec.Enable {
+		p, err := c.reg.Get(id)
+		if err != nil {
+			// Missing target (e.g. i2c0m2 on a board that does not list it).
+			// Not fatal: the rest of the app still comes up.
+			logger.Warn("compatible app sub-peripheral missing", "app", c.spec.Name, "id", id, "error", err.Error())
+			continue
+		}
+		if err := p.Enable(ctx); err != nil {
+			return fmt.Errorf("%s: %w", id, err)
 		}
 	}
-	logger.Info("Compatible app disabled", "name", c.name)
-	return c.deps.Cfg.Set("APP_"+c.name, "STATUS", "0")
+
+	if err := c.applyPullUps(); err != nil {
+		return err
+	}
+	if err := c.applyNodes(); err != nil {
+		return err
+	}
+
+	logger.Info("Compatible app enabled", "name", c.spec.Name, "board", c.boardID)
+	return nil
 }
 
+// applySPISignals narrows the SPI signal set to what the app actually wires up,
+// before the SPI peripheral claims its pins. Without it an app would always come
+// up with the interactive default (CS0 + MISO) instead of the subset the shell
+// configures for the same app. SPI.Enable persists the selection in the
+// CS_ENABLE / MISO_ENABLE config keys, so it survives a reboot.
+func (c *CompatibleApp) applySPISignals() {
+	if c.spec.SPI == nil {
+		return
+	}
+	for _, id := range c.spec.Enable {
+		p, err := c.reg.Get(id)
+		if err != nil {
+			continue
+		}
+		spi, ok := p.(*SPI)
+		if !ok {
+			continue
+		}
+		spi.SetSignalUsage(c.spec.SPI.CS, c.spec.SPI.MISO)
+		logger.Info("Compatible app applied SPI signal usage", "name", c.spec.Name, "id", id,
+			"cs", c.spec.SPI.CS, "miso", c.spec.SPI.MISO)
+		return
+	}
+	logger.Warn("compatible app declares spi signals but enables no spi", "app", c.spec.Name)
+}
+
+// Check reports whether the app's required pins are currently free: the
+// peripheral pins it declares in check[] plus the GPIOs it depends on. It
+// performs no hardware change. The returned bool is true when all are free.
+func (c *CompatibleApp) Check() (string, bool) {
+	conflict, err := c.deps.Diagram.CheckConflictExcluding(c.requiredTokens(), c.claimedTokens())
+	if err != nil {
+		return err.Error(), false
+	}
+	if conflict != "" {
+		return fmt.Sprintf("pin conflict: %s is already in use", conflict), false
+	}
+	return "all required pins are free", true
+}
+
+// Ready reports whether the app is up and correct right now: every interface it
+// enables is active, none of the pins it depends on is occupied, and every pin
+// pull it declares is in force. All three must hold; the app list marks passing
+// entries with "(Ready)".
+//
+// The pull condition reads the pin registers back, so it can only pass after
+// Enable has applied the pulls.
+func (c *CompatibleApp) Ready() bool {
+	if _, free := c.Check(); !free {
+		return false
+	}
+	if !c.IsActive() {
+		return false
+	}
+	return c.pullsApplied()
+}
+
+// pullsApplied reports whether the pull resistors the app declares are the ones
+// currently programmed. A pin that cannot be parsed or read counts as not
+// applied: a pull that cannot be verified is not a pull in force.
+func (c *CompatibleApp) pullsApplied() bool {
+	for _, g := range c.spec.GPIO {
+		want, ok := parsePull(g.Pull)
+		if !ok {
+			continue // no pull required for this pin
+		}
+		pin, err := board.ParseGPIO(g.Pin)
+		if err != nil {
+			logger.Debug("compatible app: unparsable pin", "app", c.spec.Name, "pin", g.Pin, "error", err)
+			return false
+		}
+		got, err := GetPull(c.deps.Chip, pin.Raw())
+		if err != nil {
+			logger.Debug("compatible app: pin pull unreadable", "app", c.spec.Name, "pin", g.Pin, "error", err)
+			return false
+		}
+		if got != want {
+			return false
+		}
+	}
+	return true
+}
+
+// Disable is not supported: a compatible app has no state of its own. Callers
+// should turn off its sub-peripherals individually.
+func (c *CompatibleApp) Disable(ctx context.Context) error {
+	return fmt.Errorf("compatible app %q cannot be disabled; turn off its sub-peripherals individually", c.spec.Name)
+}
+
+// LoadFromConfig only refreshes the config store. A compatible app owns no
+// config keys of its own: its state is derived from the sub-peripherals it
+// enables.
 func (c *CompatibleApp) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
 	c.deps.Cfg = cfg
-	if cfg.Get("APP_"+c.name, "STATUS") == "1" {
-		if apply {
-			return c.Enable(ctx)
-		}
-	}
 	return nil
 }
 
-// ─── App implementations ──────────────────────────────────────────────────────
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
-func (c *CompatibleApp) enableDHT11() error {
-	// Free GPIO1_C7 (PWM11_M1) for DHT11 data line
-	if err := c.applyPWM(11, 1, false); err != nil {
-		return err
+var appIDRe = regexp.MustCompile(`^(pwm|uart|i2c|spi)(\d+)m(\d+)$`)
+
+// expandID turns a peripheral ID (e.g. "spi0m0") into the pin-diagram tokens it
+// occupies (e.g. "SPI0_M0_CLK"). Unknown IDs are returned unchanged.
+func expandID(id string) []string {
+	m := appIDRe.FindStringSubmatch(id)
+	if m == nil {
+		return []string{id}
 	}
-	return c.applyNode("dht11", "/dht11_sensor", "okay")
+	kind, n, mux := m[1], m[2], m[3]
+	switch kind {
+	case "pwm":
+		return []string{"PWM" + n + "_M" + mux}
+	case "uart":
+		return []string{"UART" + n + "_M" + mux + "_TX", "UART" + n + "_M" + mux + "_RX"}
+	case "i2c":
+		return []string{"I2C" + n + "_M" + mux + "_SDA", "I2C" + n + "_M" + mux + "_SCL"}
+	case "spi":
+		return []string{
+			"SPI" + n + "_M" + mux + "_CLK",
+			"SPI" + n + "_M" + mux + "_MOSI",
+			"SPI" + n + "_M" + mux + "_MISO",
+			"SPI" + n + "_M" + mux + "_CS0",
+		}
+	}
+	return []string{id}
 }
 
-func (c *CompatibleApp) enablePicoEPaper() error {
-	for _, m := range [][2]int{{0, 0}, {2, 2}, {4, 2}, {5, 2}, {6, 2}, {1, 0}} {
-		if err := c.applyPWM(m[0], m[1], false); err != nil {
-			return err
-		}
-	}
-	return c.applySPI(0, 0, true, false, true)
+// checkTokens are the pin-diagram tokens the app declares as occupied. They
+// form the candidate set of the occupancy check.
+func (c *CompatibleApp) checkTokens() []string {
+	return expandIDs(c.spec.Check)
 }
 
-func (c *CompatibleApp) enablePicoUPSB() error {
-	if err := c.applyPWM(0, 1, false); err != nil {
-		return err
-	}
-	if err := c.applyPWM(11, 2, false); err != nil {
-		return err
-	}
-	return c.applyI2C(3, 1, 1000000, true)
+// requiredTokens is everything that must be free before the app can be brought
+// up: the pins it declares in check[] plus the GPIOs it depends on.
+func (c *CompatibleApp) requiredTokens() []string {
+	return append(c.checkTokens(), c.gpioTokens()...)
 }
 
-func (c *CompatibleApp) enableOLEDModule() error {
-	for _, m := range [][2]int{{11, 1}, {10, 1}, {8, 1}, {0, 1}, {11, 2}, {4, 2}, {5, 2}} {
-		if err := c.applyPWM(m[0], m[1], false); err != nil {
-			return err
-		}
+// gpioTokens are the pin-diagram tokens of the GPIOs the app depends on. The
+// app never marks them itself (applyPullUps only writes the pull register), so
+// an occupied entry means some other consumer owns that physical pin.
+func (c *CompatibleApp) gpioTokens() []string {
+	out := make([]string, 0, len(c.spec.GPIO))
+	for _, g := range c.spec.GPIO {
+		out = append(out, g.Pin)
 	}
-	if err := c.applyUART(4, 1, false); err != nil {
-		return err
-	}
-	if err := c.applySPI(0, 0, false, false, true); err != nil {
-		return err
-	}
-	return c.applyI2C(3, 1, defaultI2CSpeed, true)
+	return out
 }
 
-func (c *CompatibleApp) enablePicoOLED() error {
-	if err := c.applyUART(3, 1, false); err != nil {
-		return err
-	}
-	for _, m := range [][2]int{{0, 0}, {0, 1}, {11, 2}} {
-		if err := c.applyPWM(m[0], m[1], false); err != nil {
-			return err
-		}
-	}
-	if err := c.applySPI(0, 0, false, false, true); err != nil {
-		return err
-	}
-	if err := c.applyI2C(3, 1, defaultI2CSpeed, true); err != nil {
-		return err
-	}
-	switch c.boardID {
-	case "pico_pro_max":
-		if err := c.applyUART(1, 1, false); err != nil {
-			return err
-		}
-	case "pico_plus":
-		if err := c.applyUART(5, 0, false); err != nil {
-			return err
-		}
-	}
-	return nil
+// claimedTokens are the tokens the app claims for itself: its check[] pins AND
+// its enable[] targets. Both are excluded from the occupancy check so the app
+// never conflicts with itself. Omitting check[] here made an app that lists one
+// of its own enable pins in check[] report a phantom conflict (e.g. Pico_LCD
+// enables spi0m0 and checks pwm0m0, so an active PWM0_M0 failed the check).
+func (c *CompatibleApp) claimedTokens() []string {
+	out := expandIDs(c.spec.Check)
+	return append(out, expandIDs(c.spec.Enable)...)
 }
 
-func (c *CompatibleApp) enablePicoLCD() error {
-	for _, m := range [][2]int{{11, 1}, {10, 1}, {0, 0}, {2, 2}, {4, 2}, {5, 2}, {6, 2}, {1, 0}, {10, 2}} {
-		if err := c.applyPWM(m[0], m[1], false); err != nil {
-			return err
-		}
+// expandIDs flattens a list of peripheral IDs into pin-diagram tokens.
+func expandIDs(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		out = append(out, expandID(id)...)
 	}
-	if err := c.applyUART(3, 1, false); err != nil {
-		return err
-	}
-	// Pins that need an internal pull-up on this board (from the shell script
-	// `luckfox_gpio_app <bank> <group> <num> up` calls).
-	var pullUps []string
-	switch c.boardID {
-	case "pico_pro_max":
-		if err := c.applyUART(1, 1, false); err != nil {
-			return err
-		}
-		if err := c.applyI2C(4, 0, defaultI2CSpeed, false); err != nil {
-			return err
-		}
-		pullUps = []string{
-			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
-			"GPIO2_A4", "GPIO2_A5", "GPIO2_A0", "GPIO2_A2",
-		}
-	case "pico_plus":
-		if err := c.applyPWM(9, 0, false); err != nil {
-			return err
-		}
-		if err := c.applyPWM(11, 0, false); err != nil {
-			return err
-		}
-		if err := c.applyUART(5, 0, false); err != nil {
-			return err
-		}
-		pullUps = []string{
-			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
-			"GPIO3_A6", "GPIO3_A7", "GPIO3_A5", "GPIO3_A2",
-		}
-	case "pico":
-		pullUps = []string{
-			"GPIO1_C6", "GPIO1_C7", "GPIO1_D1",
-			"GPIO4_B1", "GPIO4_B0", "GPIO4_A6", "GPIO4_A3",
-		}
-	}
-	if err := c.applySPI(0, 0, true, false, true); err != nil {
-		return err
-	}
-	return c.applyPullUps(pullUps...)
+	return out
 }
 
-func (c *CompatibleApp) enablePicoResTouchLCD() error {
-	for _, m := range [][2]int{{8, 1}, {0, 0}, {2, 2}, {1, 0}, {10, 2}} {
-		if err := c.applyPWM(m[0], m[1], false); err != nil {
-			return err
+// applyPullUps writes the app's GPIO pull resistors. Enabling the app is the
+// app's job; the pin layer records the setting at the pin level, so the app
+// owns no config keys of its own.
+func (c *CompatibleApp) applyPullUps() error {
+	for _, g := range c.spec.GPIO {
+		pull, ok := parsePull(g.Pull)
+		if !ok {
+			continue
 		}
-	}
-	for _, u := range [][2]int{{3, 1}, {4, 1}} {
-		if err := c.applyUART(u[0], u[1], false); err != nil {
-			return err
-		}
-	}
-	if err := c.applySPI(0, 0, false, true, true); err != nil {
-		return err
-	}
-	var pullUps []string
-	switch c.boardID {
-	case "pico_pro_max":
-		if err := c.applyUART(1, 1, false); err != nil {
-			return err
-		}
-		if err := c.applyI2C(4, 0, defaultI2CSpeed, false); err != nil {
-			return err
-		}
-		if err := c.applyI2C(3, 0, defaultI2CSpeed, false); err != nil {
-			return err
-		}
-		pullUps = []string{"GPIO1_D1", "GPIO2_A5"}
-	case "pico_plus":
-		if err := c.applyUART(5, 0, false); err != nil {
-			return err
-		}
-		if err := c.applyI2C(0, 2, defaultI2CSpeed, true); err != nil {
-			return err
-		}
-		pullUps = []string{"GPIO1_D1", "GPIO3_A7"}
-	}
-	return c.applyPullUps(pullUps...)
-}
-
-// applyPullUps enables the internal pull-up on the given GPIO pins, mirroring
-// the `luckfox_gpio_app <bank> <group> <num> up` calls of the shell scripts.
-// Pins that do not exist on the current board must not be listed by callers.
-func (c *CompatibleApp) applyPullUps(pins ...string) error {
-	for _, name := range pins {
-		pin, err := board.ParseGPIO(name)
+		pin, err := board.ParseGPIO(g.Pin)
 		if err != nil {
-			return fmt.Errorf("pull-up %s: %w", name, err)
+			return fmt.Errorf("pull %s: %w", g.Pin, err)
 		}
-		if err := SetPull(c.deps.Chip, pin.Raw(), PullUp); err != nil {
-			return fmt.Errorf("pull-up %s: %w", name, err)
+		if err := SetPull(c.deps.Chip, pin.Raw(), pull); err != nil {
+			return fmt.Errorf("pull %s: %w", g.Pin, err)
+		}
+		if err := SavePinSetting(c.deps.Cfg, pin.String(), "PULL", PullModeName(pull)); err != nil {
+			return fmt.Errorf("pull %s: %w", g.Pin, err)
 		}
 	}
 	return nil
 }
 
-// ─── Sub-peripheral helpers ────────────────────────────────────────────────────
-
-// applyPWM enables or disables PWM{main} M{sub} via dynamic overlay.
-func (c *CompatibleApp) applyPWM(main, sub int, enable bool) error {
-	devPath, err := c.deps.ResolveAlias(fmt.Sprintf("pwm%d", main))
-	if err != nil {
-		return fmt.Errorf("pwm%d: resolve: %w", main, err)
+func parsePull(s string) (PullMode, bool) {
+	switch strings.ToLower(s) {
+	case "up":
+		return PullUp, true
+	case "down":
+		return PullDown, true
+	case "none":
+		return PullNone, true
 	}
-	status := "disabled"
-	if enable {
-		status = "okay"
-	}
-	dts := fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tstatus = \"%s\";\n};\n", devPath, status)
-	if err := c.deps.Dynamic.Apply(fmt.Sprintf("pwm%dm%d", main, sub), dts); err != nil {
-		return err
-	}
-	/*
-		if c.deps.Static != nil {
-			_ = c.deps.Static.Apply(dts)
-		}
-	*/
-	return nil
+	return PullNone, false
 }
 
-// applyUART enables or disables UART{main} M{sub} via dynamic overlay.
-func (c *CompatibleApp) applyUART(main, sub int, enable bool) error {
-	devPath, err := c.deps.ResolveAlias(fmt.Sprintf("serial%d", main))
-	if err != nil {
-		return fmt.Errorf("uart%d: resolve: %w", main, err)
-	}
-	status := "disabled"
-	if enable {
-		status = "okay"
-	}
-	dts := fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tstatus = \"%s\";\n};\n", devPath, status)
-	if err := c.deps.Dynamic.Apply(fmt.Sprintf("uart%dm%d", main, sub), dts); err != nil {
-		return err
-	}
-	/*
-		if c.deps.Static != nil {
-			_ = c.deps.Static.Apply(dts)
+func (c *CompatibleApp) applyNodes() error {
+	for _, n := range c.spec.Nodes {
+		overlayID := strings.Trim(strings.ReplaceAll(n.Path, "/", "_"), "_")
+		dts := fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tstatus = \"%s\";\n};\n", n.Path, n.Status)
+		if err := c.deps.Dynamic.Apply(overlayID, dts); err != nil {
+			return fmt.Errorf("node %s: %w", n.Path, err)
 		}
-	*/
-	return nil
-}
-
-// applyI2C enables or disables I2C{main} M{sub} via dynamic overlay.
-func (c *CompatibleApp) applyI2C(main, sub, speed int, enable bool) error {
-	devPath, err := c.deps.ResolveAlias(fmt.Sprintf("i2c%d", main))
-	if err != nil {
-		return fmt.Errorf("i2c%d: resolve: %w", main, err)
 	}
-	var dts string
-	if enable {
-		dts = fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tclock-frequency = <%d>;\n\tstatus = \"okay\";\n};\n", devPath, speed)
-	} else {
-		dts = fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tstatus = \"disabled\";\n};\n", devPath)
-	}
-	if err := c.deps.Dynamic.Apply(fmt.Sprintf("i2c%dm%d", main, sub), dts); err != nil {
-		return err
-	}
-	/*
-		if c.deps.Static != nil {
-			_ = c.deps.Static.Apply(dts)
-		}
-	*/
-	return nil
-}
-
-// applySPI enables or disables SPI{main} M{sub} via dynamic overlay.
-// cs and miso indicate whether those SPI lines are active; passed through for
-// future pinctrl-0 phandle selection when deps.Static is available.
-func (c *CompatibleApp) applySPI(main, sub int, cs, miso bool, enable bool) error {
-	devPath, err := c.deps.ResolveAlias(fmt.Sprintf("spi%d", main))
-	if err != nil {
-		return fmt.Errorf("spi%d: resolve: %w", main, err)
-	}
-	status := "disabled"
-	if enable {
-		status = "okay"
-	}
-	_ = cs
-	_ = miso
-	dts := fmt.Sprintf(`/dts-v1/;
-/plugin/;
-
-&{%s} {
-	status = "%s";
-};
-
-&{%s/spidev@0} {
-	status = "%s";
-};
-`, devPath, status, devPath, status)
-	if err := c.deps.Dynamic.Apply(fmt.Sprintf("spi%dm%d", main, sub), dts); err != nil {
-		return err
-	}
-	/*
-		if c.deps.Static != nil {
-			_ = c.deps.Static.Apply(dts)
-		}
-	*/
-	return nil
-}
-
-// applyNode sets the status of an arbitrary DT node via dynamic overlay.
-func (c *CompatibleApp) applyNode(overlayID, nodePath, status string) error {
-	dts := fmt.Sprintf("/dts-v1/;\n/plugin/;\n\n&{%s} {\n\tstatus = \"%s\";\n};\n", nodePath, status)
-	if err := c.deps.Dynamic.Apply(overlayID, dts); err != nil {
-		return err
-	}
-	/*
-		if c.deps.Static != nil {
-			_ = c.deps.Static.Apply(dts)
-		}
-	*/
 	return nil
 }
 

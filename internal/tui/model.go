@@ -250,21 +250,13 @@ func newMainMenu(appCtx *AppContext) ListMenuModel {
 			items = append(items, MenuItem{Label: label, Value: "4g"})
 		}
 		if len(appCtx.Board.Peripherals.CompatibleApps) > 0 {
-			// Check if any app is enabled
-			label := "Compatible Applications"
-			for _, name := range appCtx.Board.Peripherals.CompatibleApps {
-				if p, err := appCtx.Registry.Get("app_" + name); err == nil && p.IsActive() {
-					label += " (Enabled)"
-					break
-				}
-			}
-			items = append(items, MenuItem{Label: label, Value: "apps"})
+			items = append(items, MenuItem{Label: "Compatible Applications", Value: "apps"})
 		}
 		if appCtx.Board.Features.HasFBTFT {
 			addWithCheck("Display (FBTFT)", "fbtft", "fbtft")
 		}
 
-		items = append(items, MenuItem{Label: "Backup Rootfs", Value: "backup"})
+		items = append(items, MenuItem{Label: "Backup", Value: "backup"})
 		items = append(items, MenuItem{Label: "About / Pin Diagram", Value: "about"})
 		return items
 	}

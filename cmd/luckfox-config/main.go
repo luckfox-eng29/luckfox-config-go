@@ -143,6 +143,10 @@ func initAppContext(bc *board.BoardConfig, cfgPath string) (*tui.AppContext, err
 		device = ""
 	}
 
+	// Apply media-class restrictions to the compatible app list before anything
+	// reads it, so the registry and the TUI stay consistent.
+	bc.Peripherals.CompatibleApps = filterCompatibleAppsByMedia(bc, device)
+
 	var staticOverlay *overlay.StaticOverlay
 	if device != "" {
 		so, err := overlay.NewStatic(bc.Chip, device)
@@ -180,7 +184,41 @@ func initAppContext(bc *board.BoardConfig, cfgPath string) (*tui.AppContext, err
 		Panels:   panels,
 		Ctx:      context.Background(),
 		Warnings: warnings,
+		Deps:     deps,
 	}, nil
+}
+
+// sdmmcExcludedApps lists compatible apps that are not usable when the board
+// boots from an SD card. It mirrors the shell script's sdmmc compatible_group:
+// on the Pico Plus SD variant only Pico_ePaper, Pico_UPS_B, OLED_Module and
+// DHT11 remain selectable.
+var sdmmcExcludedApps = map[string][]string{
+	"pico_plus": {"Pico_LCD", "Pico_ResTouch_LCD", "Pico_OLED"},
+}
+
+// filterCompatibleAppsByMedia drops the apps that are unsupported on the
+// current boot media. Only boards listed in sdmmcExcludedApps are affected;
+// every other board keeps its full list.
+func filterCompatibleAppsByMedia(bc *board.BoardConfig, bootDevice string) []board.CompatibleAppSpec {
+	apps := bc.Peripherals.CompatibleApps
+	if bootDevice != "/dev/mmcblk1p4" {
+		return apps
+	}
+	excluded := sdmmcExcludedApps[bc.ID]
+	if len(excluded) == 0 {
+		return apps
+	}
+	skip := make(map[string]struct{}, len(excluded))
+	for _, name := range excluded {
+		skip[name] = struct{}{}
+	}
+	kept := make([]board.CompatibleAppSpec, 0, len(apps))
+	for _, app := range apps {
+		if _, drop := skip[app.Name]; !drop {
+			kept = append(kept, app)
+		}
+	}
+	return kept
 }
 
 func detectBootDevice(bc *board.BoardConfig) (string, error) {
@@ -312,8 +350,8 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 	}
 
 	// Compatible Apps
-	for _, name := range bc.Peripherals.CompatibleApps {
-		reg.Register(peripheral.NewCompatibleApp(name, bc.ID, deps))
+	for _, appSpec := range bc.Peripherals.CompatibleApps {
+		reg.Register(peripheral.NewCompatibleApp(appSpec, bc.ID, deps, reg))
 	}
 
 	// FBTFT
