@@ -214,7 +214,7 @@ func (t *Touchscreen) pinctrlProperty() (string, error) {
 			logger.Debug("Pinctrl node not found, skipping", "node", name)
 			continue
 		}
-		refs = append(refs, "<"+phandle+">")
+		refs = append(refs, phandle)
 	}
 	if len(refs) == 0 {
 		return "", nil

@@ -94,12 +94,14 @@ func (p *PWM) buildDTS(fullPath, status string) string {
 	}
 
 	pinctrl := ""
-	if status == "okay" && strings.ToLower(p.deps.ConfigMode) != "rmio" {
-		pinctrlName := fmt.Sprintf("pwm%dm%d_pins", p.channel, p.mux)
-		if p.deps.PinctrlNaming == "v2" {
-			pinctrlName = fmt.Sprintf("pwm%dm%d_ch%d_pins", p.controller, p.mux, p.channel)
+	if status == "okay" {
+		if strings.ToLower(p.deps.ConfigMode) == "rmio" {
+			// RMIO: pin mux done via iomux, overlay references the per-pin
+			// pinctrl node like the shell script does.
+			pinctrl = p.rmioPinctrl()
+		} else if s := p.deps.pinSnippet(p.ID(), []string{p.deps.pinName("pwm", p.controller, p.mux, p.channel)}, nil); s != "" {
+			pinctrl = "\t" + s + "\n"
 		}
-		pinctrl = fmt.Sprintf("\tpinctrl-0 = <&%s>;\n", pinctrlName)
 	}
 
 	return fmt.Sprintf(`/dts-v1/;
@@ -111,14 +113,36 @@ func (p *PWM) buildDTS(fullPath, status string) string {
 `, target, pinctrl, status)
 }
 
+// rmioPinctrl returns the overlay snippet referencing the per-pin pinctrl
+// node, mirroring the shell script (pinctrl-names + pinctrl-0 = <phandle>).
+func (p *PWM) rmioPinctrl() string {
+	if p.pin < 0 {
+		return ""
+	}
+	name := fmt.Sprintf("rm-io%d-pwm%d-ch%d", p.pin, p.controller, p.channel)
+	if phandle, err := FindNodePhandle(name); err == nil {
+		return fmt.Sprintf("\tpinctrl-names = \"active\";\n\tpinctrl-0 = <%d>;\n", phandle)
+	}
+	logger.Warn("pinctrl node not found, overlay without pinctrl-0", "node", name)
+	return ""
+}
+
 func (p *PWM) Enable(ctx context.Context) error {
+	// A channel the base device tree already enables from boot is owned by the
+	// system: writing our overlay would trigger a revert on re-apply and
+	// reverting panics this BSP kernel, so leave it alone.
+	if p.SystemReserved() {
+		logger.Warn("PWM enabled by the base device tree, enable skipped", "id", p.ID())
+		return nil
+	}
+
 	if strings.ToLower(p.deps.ConfigMode) == "rmio" {
 		if p.pin < 0 {
 			return fmt.Errorf("%s: pin must be set before enabling", p.ID())
 		}
 
 		pinName := board.RMIOName(p.pin)
-		if err := p.deps.Diagram.CheckConflictErr([]string{pinName}); err != nil {
+		if err := p.deps.Diagram.CheckConflictErrSelf([]string{pinName}); err != nil {
 			return err
 		}
 

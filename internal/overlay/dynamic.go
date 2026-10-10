@@ -34,6 +34,10 @@ func NewDynamic() *DynamicOverlay {
 // Apply compiles the DTS content and loads it as a named overlay.
 // Equivalent to luckfox_dtbo_overlay().
 func (o *DynamicOverlay) Apply(nodeName, dtsContent string) error {
+	if err := CheckNoSymbolRefs(nodeName, dtsContent); err != nil {
+		return err
+	}
+
 	dtsFile := filepath.Join(o.TempDir, ".overlay_"+nodeName+".dts")
 	dtboFile := filepath.Join(o.TempDir, ".overlay_"+nodeName+".dtbo")
 

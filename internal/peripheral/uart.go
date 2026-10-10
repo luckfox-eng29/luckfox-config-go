@@ -288,11 +288,7 @@ func (u *UART) buildDTS(status string) string {
 	// Non-RMIO mode needs pinctrl
 	pinctrl := ""
 	if status == "okay" {
-		name := fmt.Sprintf("uart%dm%d_xfer", u.num, u.mux)
-		if u.deps.PinctrlNaming == "v2" {
-			name += "_pins"
-		}
-		pinctrl = fmt.Sprintf("pinctrl-0 = <&%s>;", name)
+		pinctrl = u.deps.pinSnippet(u.ID(), []string{u.deps.pinName("uart", u.num, u.mux, 0)}, nil)
 	}
 
 	return fmt.Sprintf(`/dts-v1/;

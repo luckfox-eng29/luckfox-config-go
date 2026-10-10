@@ -338,13 +338,7 @@ func (s *SPI) buildDTS(status string) string {
 
 	pinctrl := ""
 	if strings.ToLower(s.deps.ConfigMode) != "rmio" && status == "okay" {
-		clkName := fmt.Sprintf("spi%dm%d_pins", s.num, s.mux)
-		csName := fmt.Sprintf("spi%dm%d_cs0", s.num, s.mux)
-		if s.deps.PinctrlNaming == "v2" {
-			clkName = fmt.Sprintf("spi%dm%d_clk_pins", s.num, s.mux)
-			csName = fmt.Sprintf("spi%dm%d_csn0_pins", s.num, s.mux)
-		}
-		pinctrl = fmt.Sprintf("pinctrl-0 = <&%s &%s>;", clkName, csName)
+		pinctrl = s.pinctrlSnippet()
 	}
 
 	return fmt.Sprintf(`/dts-v1/;
@@ -362,6 +356,45 @@ func (s *SPI) buildDTS(status string) string {
 	};
 };
 `, fullPath, pinctrl, status, s.num, s.speed, s.num)
+}
+
+// pinctrlSnippet resolves the SPI pin groups. Boards in the wild use two
+// shapes for the classic naming scheme: split signal groups
+// (spi0m0-clk/mosi/miso/cs0, the shape the vendor shell resolves) and a packed
+// group plus chip selects (spi1m0-pins/cs0/cs1). Whichever shape the board
+// provides is used, split first. The rv1126b naming scheme has no data pin
+// group at all, only clk and csn0.
+func (s *SPI) pinctrlSnippet() string {
+	clk := fmt.Sprintf("spi%dm%d-clk", s.num, s.mux)
+	cs0 := fmt.Sprintf("spi%dm%d-cs0", s.num, s.mux)
+	if s.deps.PinctrlNaming == "v2" {
+		// v2 packs clk+miso+mosi into one group, so MISO cannot be dropped.
+		return s.deps.pinSnippet(s.ID(), []string{
+			fmt.Sprintf("spi%dm%d-clk-pins", s.num, s.mux),
+			fmt.Sprintf("spi%dm%d-csn0-pins", s.num, s.mux),
+		}, nil)
+	}
+
+	if _, ok := s.deps.pinPhandle(clk); ok {
+		var optional []string
+		if s.misoUsed() {
+			optional = append(optional, fmt.Sprintf("spi%dm%d-miso", s.num, s.mux))
+		}
+		if s.csUsed() {
+			optional = append(optional, cs0)
+		}
+		return s.deps.pinSnippet(s.ID(),
+			[]string{clk, fmt.Sprintf("spi%dm%d-mosi", s.num, s.mux)},
+			optional)
+	}
+	// Packed shape: clk+miso+mosi share one group, so only CS0 is optional.
+	var optional []string
+	if s.csUsed() {
+		optional = append(optional, cs0)
+	}
+	return s.deps.pinSnippet(s.ID(),
+		[]string{fmt.Sprintf("spi%dm%d-pins", s.num, s.mux)},
+		optional)
 }
 
 var _ Peripheral = (*SPI)(nil)

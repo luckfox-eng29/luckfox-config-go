@@ -119,13 +119,39 @@ func GetNodePhandle(path string) (uint32, error) {
 	return uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3]), nil
 }
 
-// GetSymbolPath returns the path for a given symbol in the device tree.
-func GetSymbolPath(symbol string) (string, error) {
-	data, err := os.ReadFile("/proc/device-tree/__symbols__/" + symbol)
-	if err != nil {
-		return "", err
+// FindNodePhandle searches /proc/device-tree for a node with the given name
+// (e.g. "rm-io0-pwm0-ch0") and returns its phandle.
+func FindNodePhandle(name string) (uint32, error) {
+	var found *uint32
+	var walk func(dir string) error
+	walk = func(dir string) error {
+		if ph, err := GetNodePhandle(dir); err == nil {
+			if filepath.Base(dir) == name {
+				found = &ph
+				return nil
+			}
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if err := walk(filepath.Join(dir, e.Name())); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	return strings.TrimRight(string(data), "\x00"), nil
+	if err := walk("/proc/device-tree"); err != nil {
+		return 0, err
+	}
+	if found == nil {
+		return 0, fmt.Errorf("node %s not found in /proc/device-tree", name)
+	}
+	return *found, nil
 }
 
 // Registry holds all Peripheral instances for the current board.

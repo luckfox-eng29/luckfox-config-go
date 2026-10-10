@@ -273,11 +273,7 @@ func (c *CAN) buildDTS(status string) string {
 
 	pinctrl := ""
 	if strings.ToLower(c.deps.ConfigMode) != "rmio" && status == "okay" {
-		name := fmt.Sprintf("can%dm%d_xfer", c.num, c.mux)
-		if c.deps.PinctrlNaming == "v2" {
-			name = fmt.Sprintf("can%dm%d_pins", c.num, c.mux)
-		}
-		pinctrl = fmt.Sprintf("pinctrl-0 = <&%s>;", name)
+		pinctrl = c.deps.pinSnippet(c.ID(), []string{c.deps.pinName("can", c.num, c.mux, 0)}, nil)
 	}
 
 	return fmt.Sprintf(`/dts-v1/;

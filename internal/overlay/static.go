@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
@@ -47,6 +46,10 @@ func (s *StaticOverlay) writeTempDTB() error {
 // Apply overlays DTS content onto the existing DTB and writes back to partition.
 // Equivalent to luckfox_fdt_overlay().
 func (s *StaticOverlay) Apply(dtsContent string) error {
+	if err := CheckNoSymbolRefs("static overlay", dtsContent); err != nil {
+		return err
+	}
+
 	dtsFile := s.TempDir + "/.fdt_overlay.dts"
 	dtboFile := s.TempDir + "/.fdt_overlay.dtbo"
 
@@ -208,75 +211,6 @@ func (s *StaticOverlay) ResolveAlias(alias string) (string, error) {
 		return "", fmt.Errorf("fdtget: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-// GetPinctrlPins returns a list of GPIO names (e.g. "GPIO1_PB0") used by a pinctrl node.
-// It parses the "rockchip,pins" property from the DTB.
-func (s *StaticOverlay) GetPinctrlPins(label string) ([]string, error) {
-	if err := s.writeTempDTB(); err != nil {
-		return nil, err
-	}
-
-	// Find the node by label or phandle
-	// This is tricky because fdtget doesn't easily find nodes by label.
-	// We can use fdtdump to find the node path for a label.
-	out, err := exec.Command("fdtdump", s.dtbFile()).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("fdtdump: %w", err)
-	}
-
-	lines := strings.Split(string(out), "\n")
-	for i, line := range lines {
-		if strings.Contains(line, label+":") || strings.Contains(line, label+" {") {
-			// Find the path. We might need to backtrack or track depth.
-			// Simplified: search for the next "rockchip,pins" property in this node.
-			for j := i; j < len(lines); j++ {
-				if strings.Contains(lines[j], "rockchip,pins") {
-					// Found the property. Now we need to parse it.
-					// Format: "rockchip,pins = <0x00000001 0x0000000c 0x00000002 0x00000034 ...>"
-					parts := strings.Split(lines[j], "<")
-					if len(parts) > 1 {
-						data := strings.Trim(parts[1], ">; ")
-						return parseRockchipPins(data), nil
-					}
-				}
-				if strings.Contains(lines[j], "};") && j > i {
-					break // End of node
-				}
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("pinctrl node %s not found or has no pins", label)
-}
-
-func parseRockchipPins(data string) []string {
-	fields := strings.Fields(data)
-	var pins []string
-	// Each pin is a tuple of 4 cells: <bank pin_num mux config_phandle>
-	for i := 0; i+3 < len(fields); i += 4 {
-		bank, _ := strconv.ParseUint(strings.TrimPrefix(fields[i], "0x"), 16, 32)
-		pinNum, _ := strconv.ParseUint(strings.TrimPrefix(fields[i+1], "0x"), 16, 32)
-
-		// Convert pinNum (0-31) to Group (A-D) and Index (0-7)
-		group := ""
-		switch {
-		case pinNum < 8:
-			group = "A"
-		case pinNum < 16:
-			group = "B"
-			pinNum -= 8
-		case pinNum < 24:
-			group = "C"
-			pinNum -= 16
-		default:
-			group = "D"
-			pinNum -= 24
-		}
-
-		pins = append(pins, fmt.Sprintf("GPIO%d_%s%d", bank, group, pinNum))
-	}
-	return pins
 }
 
 // GetProperty reads a property from the DTB using fdtget.

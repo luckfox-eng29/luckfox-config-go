@@ -313,11 +313,7 @@ func (c *I2C) buildDTS(status string) string {
 
 	pinctrl := ""
 	if strings.ToLower(c.deps.ConfigMode) != "rmio" && status == "okay" {
-		name := fmt.Sprintf("i2c%dm%d_xfer", c.num, c.mux)
-		if c.deps.PinctrlNaming == "v2" {
-			name = fmt.Sprintf("i2c%dm%d_pins", c.num, c.mux)
-		}
-		pinctrl = fmt.Sprintf("pinctrl-0 = <&%s>;", name)
+		pinctrl = c.deps.pinSnippet(c.ID(), []string{c.deps.pinName("i2c", c.num, c.mux, 0)}, nil)
 	}
 
 	return fmt.Sprintf(`/dts-v1/;
