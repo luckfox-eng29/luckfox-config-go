@@ -42,6 +42,25 @@ func parsePeripheralString(s string) (int, int, int) {
 	return num, extra, mux
 }
 
+// bitOf renders a bool as the shell's 1/0 enable flag.
+func bitOf(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// parseBit parses a shell-style 1/0 enable flag, falling back to def when empty.
+func parseBit(v string, def bool) bool {
+	switch strings.TrimSpace(v) {
+	case "1", "true", "yes", "y":
+		return true
+	case "0", "false", "no", "n":
+		return false
+	}
+	return def
+}
+
 // ─── PWM ─────────────────────────────────────────────────────────────────────
 
 func newPWMMenu(appCtx *AppContext) ListMenuModel {
@@ -553,19 +572,31 @@ func newSPIActionMenu(appCtx *AppContext, n int, defaultMux int) ListMenuModel {
 			))
 		}
 
-		// Non-RMIO mode: ask for speed then enable
+		// Non-RMIO mode: ask for speed then enable. Split-SPI boards (RV1106)
+		// additionally let the user release the MISO / CS0 pins, matching the
+		// shell's MISO_ENABLE / CS_ENABLE dialogs.
+		spi := p.(*peripheral.SPI)
+		splitSPI := appCtx.Board.SplitSPI
+		fields := []pinField{newField("Speed Hz", "default 10000000", numberOnly("Speed Hz"))}
+		if splitSPI {
+			fields = append(fields,
+				newField("CS0 pin", fmt.Sprintf("1/0, default %d", bitOf(spi.CSEnabled())), bitFlag("CS0 pin")),
+				newField("MISO pin", fmt.Sprintf("1/0, default %d", bitOf(spi.MISOEnabled())), bitFlag("MISO pin")))
+		}
 		return NavigatePush(newPinInputForm(
 			fmt.Sprintf("SPI%d — Enter parameters", n),
-			[]string{"Speed Hz (default 10000000)"},
+			fields,
 			func(values []string) tea.Cmd {
 				speed := 10000000
 				if s := strings.TrimSpace(values[0]); s != "" {
 					speed, _ = strconv.Atoi(s)
 				}
-				s := p.(*peripheral.SPI)
-				s.SetMux(defaultMux)
-				s.SetSpeed(speed)
-				if err := s.Enable(appCtx.Ctx); err != nil {
+				spi.SetMux(defaultMux)
+				spi.SetSpeed(speed)
+				if splitSPI {
+					spi.SetSignalUsage(parseBit(values[1], spi.CSEnabled()), parseBit(values[2], spi.MISOEnabled()))
+				}
+				if err := spi.Enable(appCtx.Ctx); err != nil {
 					return Status(err.Error(), true)
 				}
 				return LoadingFull(fmt.Sprintf("SPI%d enabled on M%d", n, defaultMux), 500*time.Millisecond, 2)

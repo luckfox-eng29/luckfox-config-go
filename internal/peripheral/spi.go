@@ -36,10 +36,49 @@ type SPI struct {
 	misoPin int // -1 = disabled ("*")
 	csPin   int // -1 = disabled ("*")
 	speed   int
+
+	// Non-RMIO only: whether the MISO / CS0 signal pins are claimed by the
+	// controller. Boards whose SPI data signals live in a packed pin group
+	// (RV1126B, v2) cannot drop MISO, so SplitSPI is false there and both stay
+	// true. Mirrors the shell's MISO_ENABLE / CS_ENABLE actions.
+	csEnabled   bool
+	misoEnabled bool
 }
 
 func NewSPI(num int, deps Deps) *SPI {
-	return &SPI{num: num, mux: 0, deps: deps, sclkPin: -1, mosiPin: -1, misoPin: -1, csPin: -1, speed: defaultSPISpeed}
+	return &SPI{num: num, mux: 0, deps: deps, sclkPin: -1, mosiPin: -1, misoPin: -1, csPin: -1, speed: defaultSPISpeed, csEnabled: true, misoEnabled: true}
+}
+
+// splitSignals reports whether this board exposes the SPI data signals as
+// separate pin groups. Only then can MISO / CS0 be dropped individually; on
+// boards with a packed clk+miso+mosi group both are always claimed.
+func (s *SPI) splitSignals() bool { return s.deps.SplitSPI }
+
+// csUsed / misoUsed report whether the signal pin must be treated as claimed.
+// A board that cannot split the signal groups always claims both.
+func (s *SPI) csUsed() bool   { return s.csEnabled || !s.splitSignals() }
+func (s *SPI) misoUsed() bool { return s.misoEnabled || !s.splitSignals() }
+
+// nonRMIOPins returns the config-store pin names this SPI claims.
+func (s *SPI) nonRMIOPins() []string {
+	pins := []string{
+		fmt.Sprintf("SPI%d_M%d_CLK", s.num, s.mux),
+		fmt.Sprintf("SPI%d_M%d_MOSI", s.num, s.mux),
+	}
+	if s.misoUsed() {
+		pins = append(pins, fmt.Sprintf("SPI%d_M%d_MISO", s.num, s.mux))
+	}
+	if s.csUsed() {
+		pins = append(pins, fmt.Sprintf("SPI%d_M%d_CS0", s.num, s.mux))
+	}
+	return pins
+}
+
+func boolToBit(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
 
 func (s *SPI) ID() string {
@@ -72,7 +111,11 @@ func (s *SPI) ConfigKeys() []string {
 		return []string{p + "STATUS", p + "SCLK_RM_IO", p + "MOSI_RM_IO", p + "MISO_RM_IO", p + "CS_RM_IO", p + "SPEED"}
 	}
 	p := fmt.Sprintf("SPI%d_M%d_", s.num, s.mux)
-	return []string{p + "STATUS", p + "SPEED"}
+	keys := []string{p + "STATUS", p + "SPEED"}
+	if s.splitSignals() {
+		keys = append(keys, p+"CS_ENABLE", p+"MISO_ENABLE")
+	}
+	return keys
 }
 
 func (s *SPI) Enable(ctx context.Context) error {
@@ -163,12 +206,18 @@ func (s *SPI) Enable(ctx context.Context) error {
 
 	s.markNonRMIOPins(true)
 
-	logger.Info("SPI enabled", "num", s.num, "mux", s.mux, "speed", s.speed)
+	logger.Info("SPI enabled", "num", s.num, "mux", s.mux, "speed", s.speed,
+		"cs", s.csUsed(), "miso", s.misoUsed())
 
-	return s.deps.Cfg.SetMulti(fmt.Sprintf("SPI%d_M%d", s.num, s.mux), map[string]string{
+	cfgMap := map[string]string{
 		"STATUS": "1",
 		"SPEED":  strconv.Itoa(s.speed),
-	})
+	}
+	if s.splitSignals() {
+		cfgMap["CS_ENABLE"] = boolToBit(s.csEnabled)
+		cfgMap["MISO_ENABLE"] = boolToBit(s.misoEnabled)
+	}
+	return s.deps.Cfg.SetMulti(fmt.Sprintf("SPI%d_M%d", s.num, s.mux), cfgMap)
 }
 
 func (s *SPI) Disable(ctx context.Context) error {
@@ -260,6 +309,14 @@ func (s *SPI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool)
 
 	// Non-RMIO mode
 	mod := fmt.Sprintf("SPI%d_M%d", s.num, s.mux)
+	if s.splitSignals() {
+		if v := cfg.Get(mod, "CS_ENABLE"); v != "" {
+			s.csEnabled = v == "1"
+		}
+		if v := cfg.Get(mod, "MISO_ENABLE"); v != "" {
+			s.misoEnabled = v == "1"
+		}
+	}
 	if cfg.Get(mod, "STATUS") != "1" {
 		if !apply && s.IsActive() {
 			s.markNonRMIOPins(true)
@@ -277,36 +334,24 @@ func (s *SPI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool)
 }
 
 func (s *SPI) markNonRMIOPins(inUse bool) {
-	pins := []string{
-		fmt.Sprintf("SPI%d_M%d_CLK", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_MOSI", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_MISO", s.num, s.mux),
-		fmt.Sprintf("SPI%d_M%d_CS0", s.num, s.mux),
-	}
-	for _, name := range pins {
+	for _, name := range s.nonRMIOPins() {
 		s.deps.Diagram.MarkPin(name, inUse)
 	}
 }
 
 func (s *SPI) IsActive() bool {
-	// Check if the ConfigFS overlay exists for this peripheral
 	overlayPath := "/sys/kernel/config/device-tree/overlays/" + s.ID()
-	if _, err := os.Stat(overlayPath); err != nil {
-		return false
-	}
+	_, overlayErr := os.Stat(overlayPath)
+	hasOverlay := overlayErr == nil
 
-	// Also verify the hardware device exists
-	found := false
-	if entries, err := os.ReadDir("/dev"); err == nil {
-		prefix := fmt.Sprintf("spidev%d.", s.num)
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), prefix) {
-				found = true
-				break
-			}
-		}
+	// The mux variants of one controller share a single device tree node, so
+	// the node status alone cannot tell them apart. Require our per-mux
+	// overlay AND an enabled node: Disable() leaves a now-disabled overlay
+	// directory behind, so the overlay alone is stale too.
+	if fullPath, err := s.deps.ResolveAlias(fmt.Sprintf("spi%d", s.num)); err == nil {
+		return hasOverlay && IsNodeEnabled(fullPath)
 	}
-	return found
+	return hasOverlay
 }
 
 func (s *SPI) IsConfigEnabled(cfg *config.Store) bool {
@@ -322,6 +367,13 @@ func (s *SPI) SetPins(sclk, mosi, miso, cs int) {
 }
 func (s *SPI) SetMux(mux int)  { s.mux = mux }
 func (s *SPI) SetSpeed(hz int) { s.speed = hz }
+
+// SetSignalUsage selects whether the MISO / CS0 pins are claimed (non-RMIO).
+func (s *SPI) SetSignalUsage(cs, miso bool) { s.csEnabled, s.misoEnabled = cs, miso }
+
+// CSEnabled / MISOEnabled report the current non-RMIO signal selection.
+func (s *SPI) CSEnabled() bool   { return s.csEnabled }
+func (s *SPI) MISOEnabled() bool { return s.misoEnabled }
 
 func (s *SPI) buildDTS(status string) string {
 	alias := fmt.Sprintf("spi%d", s.num)
