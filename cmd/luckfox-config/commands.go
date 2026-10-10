@@ -310,7 +310,11 @@ func cmdPWMEnable() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p.(*peripheral.PWM).SetPin(pin)
+			pw := p.(*peripheral.PWM)
+			if pw.SystemReserved() {
+				return fmt.Errorf("%s is enabled by the base device tree and cannot be claimed or released at runtime (RK3506 pwm teardown bug); change the pwm node in the board device tree instead", id)
+			}
+			pw.SetPin(pin)
 			if err := p.Enable(context.Background()); err != nil {
 				return err
 			}
@@ -349,6 +353,9 @@ func cmdPWMDisable() *cobra.Command {
 				return err
 			}
 			fmt.Printf("PWM%d channel %d disabled\n", ctrl, ch)
+			if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
+				fmt.Println("note: RK3506 keeps the pwm controller alive until reboot (kernel pwmchip teardown bug), so the channel is released on the next boot")
+			}
 			return nil
 		},
 	}

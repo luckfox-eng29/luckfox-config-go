@@ -16,10 +16,12 @@ import (
 )
 
 // MenuItem represents a single entry in a list menu.
+// A Disabled entry stays visible (rendered dim) but cannot be selected.
 type MenuItem struct {
-	Label string
-	Value string
-	Desc  string
+	Label    string
+	Value    string
+	Desc     string
+	Disabled bool
 }
 
 // ListMenuModel is a reusable arrow-key list selection component.
@@ -96,6 +98,9 @@ func (m ListMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, NavigatePop()
 		case "right", "l", "enter", " ":
 			if len(m.items) > 0 && m.onSelect != nil {
+				if m.blocked(m.cursor) {
+					return m, nil
+				}
 				return m, m.onSelect(m.items[m.cursor])
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -103,6 +108,9 @@ func (m ListMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if idx < len(m.items) {
 				m.cursor = idx
 				if m.onSelect != nil {
+					if m.blocked(idx) {
+						return m, nil
+					}
 					return m, m.onSelect(m.items[m.cursor])
 				}
 			}
@@ -112,6 +120,9 @@ func (m ListMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if idx < len(m.items) {
 				m.cursor = idx
 				if m.onSelect != nil {
+					if m.blocked(idx) {
+						return m, nil
+					}
 					return m, m.onSelect(m.items[m.cursor])
 				}
 			}
@@ -129,6 +140,18 @@ func (m ListMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// blocked reports whether the entry at idx is not selectable, in which case it
+// also records why in the status line. Disabled entries are rendered dim and
+// ignore Enter/number/letter selection.
+func (m *ListMenuModel) blocked(idx int) bool {
+	if idx < 0 || idx >= len(m.items) || !m.items[idx].Disabled {
+		return false
+	}
+	m.message = fmt.Sprintf("%s is used by the system and cannot be changed here", m.items[idx].Label)
+	m.isError = true
+	return true
+}
+
 func (m ListMenuModel) View() string {
 	var sb strings.Builder
 
@@ -141,6 +164,9 @@ func (m ListMenuModel) View() string {
 		if i == m.cursor {
 			cursor = "> "
 			style = selectedStyle
+		}
+		if item.Disabled {
+			style = dimStyle
 		}
 		// Show index for numeric selection (1-based) or alphabet (for > 9)
 		idxStr := "  "

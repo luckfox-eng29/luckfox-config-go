@@ -185,14 +185,22 @@ func newPWMSubMenu(appCtx *AppContext, ctrl int, variants []string, chip string,
 				}
 			}
 
-			// Check if active
-			if p, err := appCtx.Registry.Get(id); err == nil && p.IsActive() {
-				label += " (Enabled)"
+			// Check runtime state and system ownership
+			reserved := false
+			if p, err := appCtx.Registry.Get(id); err == nil {
+				if p.IsActive() {
+					label += " (Enabled)"
+				}
+				if pw, ok := p.(*peripheral.PWM); ok && pw.SystemReserved() {
+					reserved = true
+					label += " [system]"
+				}
 			}
 
 			items = append(items, MenuItem{
-				Label: label,
-				Value: fmt.Sprintf("%s:%d", id, mux),
+				Label:    label,
+				Value:    fmt.Sprintf("%s:%d", id, mux),
+				Disabled: reserved,
 			})
 		}
 		return items
@@ -221,13 +229,17 @@ func newPWMActionMenu(appCtx *AppContext, id string, defaultMux int, title strin
 			if err := p.Disable(appCtx.Ctx); err != nil {
 				return Status(err.Error(), true)
 			}
-			return Loading(fmt.Sprintf("%s disabled", title), 500*time.Millisecond)
+			msg := fmt.Sprintf("%s disabled", title)
+			if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
+				msg += " (reboot to release)"
+			}
+			return Loading(msg, 500*time.Millisecond)
 		}
 
 		if strings.ToLower(appCtx.Board.ConfigMode) == "rmio" {
 			return NavigatePush(newPinInputForm(
 				fmt.Sprintf("%s — Enter RM_IO pin number", title),
-				[]string{"RM_IO pin (0-31)"},
+				[]pinField{newField("RM_IO pin", "0-31", pinRange("RM_IO pin"))},
 				func(values []string) tea.Cmd {
 					pin, err := strconv.Atoi(strings.TrimSpace(values[0]))
 					if err != nil || pin < 0 || pin > 31 {
