@@ -54,7 +54,7 @@
         "spi": {"cs": true, "miso": false},
         "enable": ["spi0m0"],
         "check": ["pwm11m1", "pwm10m1", "pwm0m0", "pwm2m2", "pwm4m2", "pwm5m2", "pwm6m2", "pwm1m0", "pwm10m2", "uart3m1", "pwm9m0", "pwm11m0", "uart5m0"],
-        "gpio": [{"pin": "GPIO1_C6", "pull": "up"}, {"pin": "GPIO1_C7", "pull": "up"}, {"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO3_A6", "pull": "up"}, {"pin": "GPIO3_A7", "pull": "up"}, {"pin": "GPIO3_A5", "pull": "up"}, {"pin": "GPIO3_A2", "pull": "up"}]
+        "gpio": [{"pin": "GPIO1_C6", "pull": "up"}, {"pin": "GPIO1_C7", "pull": "up"}, {"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO3_A6", "pull": "up", "mode": 0}, {"pin": "GPIO3_A7", "pull": "up", "mode": 0}, {"pin": "GPIO3_A5", "pull": "up", "mode": 0}, {"pin": "GPIO3_A2", "pull": "up", "mode": 0}]
       },
       {
         "name": "Pico_ePaper",
@@ -72,7 +72,7 @@
         "spi": {"cs": false, "miso": true},
         "enable": ["spi0m0"],
         "check": ["pwm8m1", "pwm0m0", "pwm2m2", "pwm1m0", "pwm10m2", "uart3m1", "uart4m1", "uart5m0", "i2c0m2"],
-        "gpio": [{"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO3_A7", "pull": "up"}]
+        "gpio": [{"pin": "GPIO1_D1", "pull": "up"}, {"pin": "GPIO3_A7", "pull": "up", "mode": 0}, {"pin": "GPIO3_A6", "pull": "none", "mode": 0}]
       },
       {
         "name": "OLED_Module",
