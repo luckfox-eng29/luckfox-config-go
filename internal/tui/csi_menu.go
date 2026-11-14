@@ -7,6 +7,7 @@
 package tui
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/bubbletea"
@@ -34,9 +35,19 @@ func newCSIMenu(appCtx *AppContext) ListMenuModel {
 }
 
 func newCSIUniteMenu(appCtx *AppContext) ListMenuModel {
+	current := -1
+	if p, err := appCtx.Registry.Get("csi"); err == nil {
+		current = p.(*peripheral.CSI).UniteEnabled()
+	}
+	mark := func(label, value string) string {
+		if value == fmt.Sprintf("%d", current) {
+			return label + " (current)"
+		}
+		return label
+	}
 	items := []MenuItem{
-		{Label: "Disable (standard)", Value: "0"},
-		{Label: "Enable (3840x2160)", Value: "1"},
+		{Label: mark("Disable (standard)", "0"), Value: "0"},
+		{Label: mark("Enable (3840x2160)", "1"), Value: "1"},
 	}
 	return NewListMenu("CSI Unite Mode", items, func(item MenuItem) tea.Cmd {
 		p, err := appCtx.Registry.Get("csi")
@@ -44,9 +55,7 @@ func newCSIUniteMenu(appCtx *AppContext) ListMenuModel {
 			return Status(err.Error(), true)
 		}
 		csi := p.(*peripheral.CSI)
-		if item.Value == "1" {
-			csi.SetUnite(true)
-		}
+		csi.SetUnite(item.Value == "1")
 		if err := csi.Enable(appCtx.Ctx); err != nil {
 			return Status(err.Error(), true)
 		}

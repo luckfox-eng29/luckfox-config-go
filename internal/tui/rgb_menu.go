@@ -89,7 +89,7 @@ func newRGBPresetMenu(appCtx *AppContext) ListMenuModel {
 	})
 }
 
-// applyRGBPreset writes the timing into the config and enables RGB, which
+// applyRGBPreset writes the timing into the device tree and enables RGB, which
 // applies a static overlay and takes effect after a reboot.
 func applyRGBPreset(appCtx *AppContext, p rgbPreset, msg string) tea.Cmd {
 	per, err := appCtx.Registry.Get("rgb")

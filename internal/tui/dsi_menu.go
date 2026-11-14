@@ -74,11 +74,21 @@ func newDSIPanelMenu(appCtx *AppContext, family peripheral.DSIPanelFamily) ListM
 }
 
 func newDSIRotateMenu(appCtx *AppContext) ListMenuModel {
+	current := 0
+	if dsi := getDSIPeripheral(appCtx); dsi != nil {
+		current = dsi.GetLogoRotate()
+	}
+	mark := func(label string, angle int) string {
+		if angle == current {
+			return label + " (current)"
+		}
+		return label
+	}
 	items := []MenuItem{
-		{Label: "0°", Value: "0"},
-		{Label: "90°", Value: "90"},
-		{Label: "180°", Value: "180"},
-		{Label: "270°", Value: "270"},
+		{Label: mark("0°", 0), Value: "0"},
+		{Label: mark("90°", 90), Value: "90"},
+		{Label: mark("180°", 180), Value: "180"},
+		{Label: mark("270°", 270), Value: "270"},
 	}
 	return NewListMenu("Logo Rotation", items, func(item MenuItem) tea.Cmd {
 		angle, _ := strconv.Atoi(item.Value)
