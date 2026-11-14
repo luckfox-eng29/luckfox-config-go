@@ -47,6 +47,15 @@ type DoneLoadingMsg struct {
 	PopCount int
 }
 
+// WorkMsg starts a background operation together with its loading animation.
+// It is delivered to the active screen before the work runs, so the spinner is
+// switched on synchronously and cannot be restarted by a result that arrives
+// first.
+type WorkMsg struct {
+	Text string
+	Work tea.Cmd
+}
+
 // NavigatePush returns a Cmd that pushes a new screen.
 func NavigatePush(m tea.Model) tea.Cmd {
 	return func() tea.Msg { return NavigatePushMsg{Model: m} }
@@ -77,6 +86,14 @@ func Loading(text string, d time.Duration) tea.Cmd {
 // LoadingFull returns a Cmd that shows a loading spinner then pops multiple screens.
 func LoadingFull(text string, d time.Duration, popCount int) tea.Cmd {
 	return func() tea.Msg { return LoadingMsg{Text: text, Duration: d, PopCount: popCount} }
+}
+
+// LoadingWork returns a Cmd that runs work under a loading spinner. The spinner
+// is switched on by WorkMsg in Update, i.e. before work starts, so an operation
+// that fails immediately cannot leave the spinner running forever. Batching a
+// LoadingMsg with the work command has no defined order and does exactly that.
+func LoadingWork(text string, work tea.Cmd) tea.Cmd {
+	return func() tea.Msg { return WorkMsg{Text: text, Work: work} }
 }
 
 // AppContext holds shared state passed to all screens.

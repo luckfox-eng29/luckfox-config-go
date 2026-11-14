@@ -67,6 +67,14 @@ func (m ListMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
 		}
+	case WorkMsg:
+		m.isLoading = true
+		m.message = msg.Text
+		m.isError = false
+		if m.refreshItems != nil {
+			m.items = m.refreshItems()
+		}
+		return m, tea.Batch(m.spinner.Tick, msg.Work)
 	case LoadingMsg:
 		m.isLoading = true
 		m.message = msg.Text

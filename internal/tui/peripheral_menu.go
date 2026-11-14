@@ -912,6 +912,11 @@ func (f pinInputForm) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			f.spinner, cmd = f.spinner.Update(msg)
 			return f, cmd
 		}
+	case WorkMsg:
+		f.isLoading = true
+		f.message = msg.Text
+		f.isError = false
+		return f, tea.Batch(f.spinner.Tick, msg.Work)
 	case LoadingMsg:
 		f.isLoading = true
 		f.message = msg.Text
