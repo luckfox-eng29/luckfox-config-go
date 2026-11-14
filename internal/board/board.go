@@ -129,9 +129,16 @@ type SPISignals struct {
 }
 
 // GPIOAction is a single pin-level operation performed by a compatible app.
+//
+// Mode is the iomux function the pin has to be switched to. It is optional on
+// purpose: when the JSON omits it the pin's multiplexing is left alone, which is
+// what a pin that already serves as GPIO needs. Boards whose base device tree
+// routes the pin to another function (SDMMC, UART, ...) declare Mode 0 to bring
+// it back to GPIO.
 type GPIOAction struct {
 	Pin  string `json:"pin"`            // e.g. "GPIO1_C6"
 	Pull string `json:"pull,omitempty"` // "up", "down" or "none"
+	Mode *int   `json:"mode,omitempty"` // iomux function; 0 is GPIO, nil leaves it untouched
 }
 
 // NodeAction toggles the status of an arbitrary device-tree node.
