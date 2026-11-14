@@ -38,6 +38,8 @@ func registerPeripheralCommands(root *cobra.Command) {
 // ─── CSI ──────────────────────────────────────────────────────────────────────
 
 // cmdGetCSIUnite reports the CSI unite mode stored in the boot partition DTB.
+// The value is read from the running device tree (/proc/device-tree), not from
+// the config store.
 // Kept top-level for compatibility with the legacy shell subcommand.
 func cmdGetCSIUnite() *cobra.Command {
 	return &cobra.Command{
@@ -59,10 +61,7 @@ func cmdGetCSIUnite() *cobra.Command {
 				return fmt.Errorf("CSI is not supported on this board")
 			}
 
-			unite, err := p.(*peripheral.CSI).UniteEnabled()
-			if err != nil {
-				return err
-			}
+			unite := p.(*peripheral.CSI).UniteEnabled()
 			fmt.Println(unite)
 			return nil
 		},

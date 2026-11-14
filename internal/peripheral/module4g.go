@@ -54,19 +54,29 @@ func (m *Module4G) GetMode() string {
 }
 
 func (m *Module4G) Enable(ctx context.Context) error {
-	// The 4G module hangs off the USB bus, so the SoC must act as a USB
-	// host; in peripheral (device) mode the module is not visible at all.
-	// An unset USB mode means the peripheral default.
-	usbMode := m.deps.Cfg.Get("USB", "MODE")
-	if usbMode == "" {
-		usbMode = "peripheral"
-	}
-	if usbMode != "host" {
-		return fmt.Errorf("USB is in %s mode, 4G module needs USB host mode: set USB to host first", usbMode)
+	if !m.moduleVisible() {
+		return fmt.Errorf("4G module not detected: no 1e0e USB device, wwan0 interface or ttyUSB port found")
 	}
 	mode := m.deps.Cfg.GetDefault("MODULE_4G", "MODE", "ndis")
 	apn := m.deps.Cfg.GetDefault("MODULE_4G", "APN", "")
 	return m.apply(ctx, mode, apn)
+}
+
+// moduleVisible reports whether the LTE module is reachable over USB.
+//
+// The module enumerates on its own host controller, so the OTG role of the SoC
+// says nothing about it: presence is the only useful check. Requiring host mode
+// first rejected every RK3506 board, where the module is already up (1e0e:9001,
+// wwan0 and the serial ports exist) while dr_mode is not set to host.
+func (m *Module4G) moduleVisible() bool {
+	if getCurrentPID() != "" {
+		return true
+	}
+	if _, err := os.Stat("/sys/class/net/wwan0"); err == nil {
+		return true
+	}
+	ports, _ := filepath.Glob("/dev/ttyUSB*")
+	return len(ports) > 0
 }
 
 func (m *Module4G) Disable(ctx context.Context) error {
@@ -74,11 +84,21 @@ func (m *Module4G) Disable(ctx context.Context) error {
 	return m.deps.Cfg.Set("MODULE_4G", "ENABLE", "0")
 }
 
+// stopRunningProcesses stops the 4G helpers of this module. udhcpc is shared
+// with every other interface, so only the instances bound to the 4G interfaces
+// are stopped: a bare killall udhcpc would also drop the lease of the wired
+// network.
 func (m *Module4G) stopRunningProcesses() {
 	logger.Info("Stopping 4G background processes")
-	// Kill background processes
-	for _, proc := range []string{"simcom-cm", "pppd", "udhcpc", "luckfox_4g_reset"} {
+	for _, proc := range []string{"simcom-cm", "pppd", "luckfox_4g_reset"} {
 		_ = exec.Command("killall", "-q", proc).Run()
+	}
+	stopDHCP := func(iface string) {
+		_ = exec.Command("pkill", "-q", "-f", "udhcpc -i "+iface).Run()
+	}
+	stopDHCP("wwan0")
+	if iface, err := detectLTEInterface(); err == nil && iface != "wwan0" {
+		stopDHCP(iface)
 	}
 	// Bring down wwan0
 	_ = exec.Command("ip", "link", "set", "wwan0", "down").Run()

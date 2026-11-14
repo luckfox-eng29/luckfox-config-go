@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"luckfox-config/internal/config"
+	"luckfox-config/internal/logger"
 )
 
 // DSIPanel holds timing and init data for a single MIPI DSI panel.
@@ -116,12 +117,24 @@ var touchProps = []string{
 }
 
 // DSI manages MIPI DSI display configuration via static FDT overlay.
+//
+// The selected panel is recorded in the device tree itself (luckfox,panel-family
+// and luckfox,panel-id on the panel node), so the current selection is read back
+// from /proc/device-tree instead of the config store.
 type DSI struct {
 	deps      Deps
 	fdtNode   string // e.g. "/dsi@ff640000"
 	touchNode string // touch controller node, empty when the board has none
 	families  []DSIPanelFamily
+	family    string // selection to be written by the next Enable
+	id        string
 }
+
+// Properties that record the selected panel in the device tree.
+const (
+	dsiPanelFamilyProp = "luckfox,panel-family"
+	dsiPanelIDProp     = "luckfox,panel-id"
+)
 
 func NewDSI(deps Deps, fdtNode string, families []DSIPanelFamily) *DSI {
 	return &DSI{deps: deps, fdtNode: fdtNode, touchNode: deps.Touch.Node, families: families}
@@ -129,41 +142,67 @@ func NewDSI(deps Deps, fdtNode string, families []DSIPanelFamily) *DSI {
 
 func (d *DSI) ID() string { return "dsi" }
 func (d *DSI) IsActive() bool {
-	return IsNodeEnabled(d.fdtNode)
+	return IsNodeEnabled(d.panelPath())
 }
-func (d *DSI) IsConfigEnabled(cfg *config.Store) bool {
-	return cfg.Get("DSI", "TYPE") != ""
-}
+func (d *DSI) IsConfigEnabled(*config.Store) bool { return false }
 
 func (d *DSI) PinsUsed() []int { return nil } // DSI uses dedicated lanes, not RM_IO
-func (d *DSI) ConfigKeys() []string {
-	return []string{"DSI_TYPE", "DSI_SIZE", "DSI_LOGO_ROTATE"}
+
+// ConfigKeys returns nil: the selected panel is recorded in the device tree, not
+// in the config store.
+func (d *DSI) ConfigKeys() []string { return nil }
+
+// panelPath returns the panel node the overlay writes.
+func (d *DSI) panelPath() string {
+	return d.fdtNode + "/panel@0"
+}
+
+// Selection returns the panel recorded in the running device tree.
+func (d *DSI) Selection() (family, id string) {
+	family, _ = GetNodeString(d.panelPath(), dsiPanelFamilyProp)
+	id, _ = GetNodeString(d.panelPath(), dsiPanelIDProp)
+	return family, id
+}
+
+// SetPanel selects the panel for the next Enable call. It only touches memory;
+// the device tree is written by Enable or Apply.
+func (d *DSI) SetPanel(family, id string) {
+	d.family = family
+	d.id = id
 }
 
 func (d *DSI) Enable(ctx context.Context) error {
-	family := d.deps.Cfg.Get("DSI", "TYPE")
-	id := d.deps.Cfg.Get("DSI", "SIZE")
-	if family == "" || id == "" {
-		return fmt.Errorf("DSI TYPE and SIZE must be set in config")
+	if d.family == "" || d.id == "" {
+		return fmt.Errorf("no DSI panel selected")
 	}
-	return d.Apply(ctx, family, id)
+	return d.Apply(ctx, d.family, d.id)
 }
 
+// Disable drops the panel from the device tree. The recorded selection is left
+// behind on purpose: it is the only record of what was configured.
 func (d *DSI) Disable(ctx context.Context) error {
-	return d.deps.Cfg.SetMulti("DSI", map[string]string{
-		"TYPE": "",
-		"SIZE": "",
-	})
+	if d.deps.Static == nil {
+		return fmt.Errorf("static overlay not available")
+	}
+
+	dts := fmt.Sprintf(`/dts-v1/;
+/plugin/;
+
+&{%s} {
+	status = "disabled";
+};
+`, d.panelPath())
+
+	if err := d.deps.Static.Apply(dts); err != nil {
+		return err
+	}
+	logger.Info("DSI disabled")
+	return nil
 }
 
 func (d *DSI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
 	d.deps.Cfg = cfg
-	if cfg.Get("DSI", "TYPE") == "" {
-		return nil
-	}
-	if apply {
-		return d.Enable(ctx)
-	}
+	d.family, d.id = d.Selection()
 	return nil
 }
 
@@ -177,6 +216,8 @@ func (d *DSI) Apply(ctx context.Context, family, id string) error {
 	if err != nil {
 		return err
 	}
+
+	d.family, d.id = family, id
 
 	// Build DTS overlay for panel timing and init sequences
 	dts := d.buildTimingDTS(panel)
@@ -204,10 +245,8 @@ func (d *DSI) Apply(ctx context.Context, family, id string) error {
 		return err
 	}
 
-	return d.deps.Cfg.SetMulti("DSI", map[string]string{
-		"TYPE": family,
-		"SIZE": id,
-	})
+	d.family, d.id = family, id
+	return nil
 }
 
 // applyTouch writes the touch geometry of the selected panel onto the touch
@@ -251,11 +290,10 @@ func (t PanelTouch) hasValues() bool {
 	return t.SizeX > 0 || t.SizeY > 0 || t.InvertedX || t.InvertedY || t.SwappedXY
 }
 
-// GetPanelName returns the display name of the panel selected in the config
-// store, or an empty string when no panel has been configured.
+// GetPanelName returns the display name of the panel recorded in the running
+// device tree, or an empty string when no panel has been configured.
 func (d *DSI) GetPanelName() string {
-	family := d.deps.Cfg.Get("DSI", "TYPE")
-	id := d.deps.Cfg.Get("DSI", "SIZE")
+	family, id := d.Selection()
 	if family == "" || id == "" {
 		return ""
 	}
@@ -272,18 +310,35 @@ func (d *DSI) SetLogoRotate(ctx context.Context, angle int) error {
 		return fmt.Errorf("static overlay not available")
 	}
 
+	if d.deps.LogoRotate == "" {
+		return fmt.Errorf("board has no DSI logo route node")
+	}
+
 	dts := fmt.Sprintf(`/dts-v1/;
 /plugin/;
 
-&{/display-subsystem/route/route-dsi} {
+&{%s} {
 	logo,rotate = <%d>;
 };
-`, angle)
+`, d.deps.LogoRotate, angle)
 
 	if err := d.deps.Static.Apply(dts); err != nil {
 		return err
 	}
-	return d.deps.Cfg.Set("DSI", "LOGO_ROTATE", fmt.Sprintf("%d", angle))
+	return nil
+}
+
+// GetLogoRotate returns the logo rotation the running device tree configures,
+// or 0 when the property is absent.
+func (d *DSI) GetLogoRotate() int {
+	if d.deps.LogoRotate == "" {
+		return 0
+	}
+	v, err := GetNodeU32(d.deps.LogoRotate, "logo,rotate")
+	if err != nil {
+		return 0
+	}
+	return int(v)
 }
 
 func (d *DSI) buildTimingDTS(p *DSIPanel) string {
@@ -319,6 +374,11 @@ func (d *DSI) buildTimingDTS(p *DSIPanel) string {
 	if p.PanelExitSeq != "" {
 		dts += fmt.Sprintf("\tpanel-exit-sequence = [%s];\n", p.PanelExitSeq)
 	}
+
+	// Record the selection in the device tree: it is the only state the panel
+	// keeps, so later runs read it back from /proc/device-tree.
+	dts += fmt.Sprintf("\t%s = \"%s\";\n", dsiPanelFamilyProp, d.family)
+	dts += fmt.Sprintf("\t%s = \"%s\";\n", dsiPanelIDProp, d.id)
 
 	dts += fmt.Sprintf(`	display-timings {
 		timing0: timing0 {

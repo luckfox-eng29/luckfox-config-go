@@ -12,9 +12,9 @@
   "features": {
     "has_4g_module": false,
     "has_fbtft": false,
-    "has_usb": true,
-    "has_csi": true,
-    "has_rgb": false,
+    "usb_node": "/usbdrd/usb@ffb00000",
+    "csi_unite_node": "/rkisp@ffa00000",
+    "csi_bus_node": "/i2c@ff470000",
     "has_sdmmc": false
   },
   "reserved_pins": [],

@@ -162,7 +162,7 @@ func (c *I2C) checkTouchscreen() error {
 	if c.deps.Touch.BusNumber == 0 || c.num != c.deps.Touch.BusNumber {
 		return nil
 	}
-	if c.deps.Cfg.Get("TS", "ENABLE") == "1" {
+	if c.deps.Touch.Node != "" && IsNodeEnabled(c.deps.Touch.Node) {
 		return fmt.Errorf("touchscreen is enabled, disable it before configuring I2C%d", c.num)
 	}
 	if c.deps.Touch.Node == "" || c.deps.Dynamic == nil {

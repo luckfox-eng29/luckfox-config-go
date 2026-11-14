@@ -52,16 +52,28 @@ type BoardConfig struct {
 	ChipInstance chip.Chip `json:"-"`
 }
 
+// BoardFeatures describes the optional peripherals of a board.
+//
+// Every peripheral that is configured by a static (boot partition) device tree
+// overlay carries the absolute paths of the device tree nodes it has to touch.
+// An empty path means the peripheral is not available on that board, so the
+// source code never has to guess a node name: the layout of a BSP device tree
+// differs per SoC and per board.
 type BoardFeatures struct {
-	Has4GModule bool        `json:"has_4g_module"`
-	DSIFDTNode  string      `json:"dsi_fdt_node"`
-	RGBPins     []string    `json:"rgb_pins"`
-	HasFBTFT    bool        `json:"has_fbtft"`
-	HasUSB      bool        `json:"has_usb"`
-	HasCSI      bool        `json:"has_csi"`
-	HasRGB      bool        `json:"has_rgb"`
-	HasSDMMC    bool        `json:"has_sdmmc"`
-	Touch       TouchConfig `json:"touch"`
+	Has4GModule    bool   `json:"has_4g_module"`
+	DSIFDTNode     string `json:"dsi_fdt_node"`     // MIPI DSI controller, e.g. /dsi@ff640000
+	LogoRotateNode string `json:"logo_rotate_node"` // display route of the DSI logo, e.g. /display-subsystem/route/route-dsi
+	USBNode        string `json:"usb_node"`         // USB OTG controller, e.g. /usbdrd/usb@ffb00000
+	CSIUniteNode   string `json:"csi_unite_node"`   // ISP node carrying rockchip,unite, e.g. /rkisp@ffa00000
+	CSIBusNode     string `json:"csi_bus_node"`     // I2C bus the CSI sensor sits on, e.g. /i2c@ff470000
+	RGBNode        string `json:"rgb_node"`         // RGB output of the syscon, e.g. /syscon@ff000000/rgb
+	RGBPanelNode   string `json:"rgb_panel_node"`   // RGB panel node, e.g. /panel
+	RGBCMANode     string `json:"rgb_cma_node"`     // CMA region the RGB framebuffer needs, e.g. /reserved-memory/linux,cma
+
+	RGBPins  []string    `json:"rgb_pins"`
+	HasFBTFT bool        `json:"has_fbtft"`
+	HasSDMMC bool        `json:"has_sdmmc"`
+	Touch    TouchConfig `json:"touch"`
 }
 
 // TouchConfig describes the touch controller of a board.

@@ -9,14 +9,21 @@ package peripheral
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"luckfox-config/internal/config"
 	"luckfox-config/internal/logger"
 )
 
+// RGB manages the RGB parallel display through a static device tree overlay.
+//
+// Node paths come from the board description: the device tree layout differs per
+// SoC, so nothing here assumes a fixed address. The active timing is read back
+// from the running device tree, never from the config store.
 type RGB struct {
 	deps                 Deps
+	node                 string // RGB output node, e.g. /syscon@ff000000/rgb
+	panelNode            string // RGB panel node, e.g. /panel
+	cmaNode              string // CMA region the framebuffer needs
 	pins                 []string
 	clk                  int
 	h, v                 int
@@ -27,40 +34,36 @@ type RGB struct {
 	deActive, pclkActive int
 }
 
-func NewRGB(deps Deps, pins []string) *RGB {
-	return &RGB{deps: deps, pins: pins}
+func NewRGB(deps Deps, node, panelNode, cmaNode string, pins []string) *RGB {
+	return &RGB{deps: deps, node: node, panelNode: panelNode, cmaNode: cmaNode, pins: pins}
 }
 
 func (r *RGB) ID() string      { return "rgb" }
 func (r *RGB) PinsUsed() []int { return nil }
-func (r *RGB) ConfigKeys() []string {
-	return []string{
-		"RGB_ENABLE", "RGB_MODE", "RGB_CLK", "RGB_HACTIVE", "RGB_VACTIVE",
-		"RGB_HBACKPORCH", "RGB_HFRONTPORCH", "RGB_VBACKPORCH", "RGB_VFRONTPORCH",
-		"RGB_HSYNC_LEN", "RGB_VSYNC_LEN", "RGB_HSYNC_ACTIVE", "RGB_VSYNC_ACTIVE",
-		"RGB_DE_ACTIVE", "RGB_PCLK_ACTIVE",
-	}
-}
 
+// ConfigKeys returns nil: RGB is described by the device tree, not by the
+// config store.
+func (r *RGB) ConfigKeys() []string { return nil }
+
+// IsActive reports whether the RGB output is enabled in the running device tree.
 func (r *RGB) IsActive() bool {
-	return IsNodeEnabled("/syscon@ff000000/rgb")
+	return IsNodeEnabled(r.node)
 }
 
-func (r *RGB) IsConfigEnabled(cfg *config.Store) bool {
-	return cfg.Get("RGB", "ENABLE") == "1"
-}
+// IsConfigEnabled is always false: RGB has no config store representation.
+func (r *RGB) IsConfigEnabled(*config.Store) bool { return false }
 
 func (r *RGB) Enable(ctx context.Context) error {
 	if r.deps.Static == nil {
 		return fmt.Errorf("static overlay not available")
 	}
 
-	if err := r.loadFromConfig(); err != nil {
+	if err := r.deps.Diagram.CheckConflictErrSelf(r.pins); err != nil {
 		return err
 	}
 
-	if err := r.deps.Diagram.CheckConflictErrSelf(r.pins); err != nil {
-		return err
+	if r.clk == 0 || r.h == 0 || r.v == 0 {
+		return fmt.Errorf("no RGB timing configured")
 	}
 
 	for _, pin := range r.pins {
@@ -73,9 +76,7 @@ func (r *RGB) Enable(ctx context.Context) error {
 	}
 
 	logger.Info("RGB enabled", "resolution", r.h, "x", r.v)
-	return r.deps.Cfg.SetMulti("RGB", map[string]string{
-		"ENABLE": "1",
-	})
+	return nil
 }
 
 func (r *RGB) Disable(ctx context.Context) error {
@@ -93,65 +94,44 @@ func (r *RGB) Disable(ctx context.Context) error {
 	}
 
 	logger.Info("RGB disabled")
-	return r.deps.Cfg.Set("RGB", "ENABLE", "0")
+	return nil
 }
 
+// LoadFromConfig syncs the in-memory timing with the running device tree. Static
+// overlays are not replayed: the device tree already holds the configuration,
+// so load must not rewrite the boot partition.
 func (r *RGB) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
 	r.deps.Cfg = cfg
-	if cfg.Get("RGB", "ENABLE") != "1" {
-		return nil
-	}
-	if apply {
-		return r.Enable(ctx)
-	}
-	for _, pin := range r.pins {
-		r.deps.Diagram.MarkPin(pin, true)
-	}
+	r.loadFromDT()
 	return nil
 }
 
-func (r *RGB) loadFromConfig() error {
-	cfg := r.deps.Cfg
-	if v := cfg.Get("RGB", "CLK"); v != "" {
-		r.clk, _ = strconv.Atoi(v)
+// loadFromDT fills the timing fields from the device tree the kernel booted with.
+// Values that cannot be read keep their current value, so a partially described
+// panel still produces a valid overlay.
+func (r *RGB) loadFromDT() {
+	if r.panelNode == "" {
+		return
 	}
-	if v := cfg.Get("RGB", "HACTIVE"); v != "" {
-		r.h, _ = strconv.Atoi(v)
+	timing := r.panelNode + "/display-timings/timing0"
+	read := func(prop string, dst *int) {
+		if v, err := GetNodeU32(timing, prop); err == nil {
+			*dst = int(v)
+		}
 	}
-	if v := cfg.Get("RGB", "VACTIVE"); v != "" {
-		r.v, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "HBACKPORCH"); v != "" {
-		r.hb, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "HFRONTPORCH"); v != "" {
-		r.hf, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "VBACKPORCH"); v != "" {
-		r.vb, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "VFRONTPORCH"); v != "" {
-		r.vf, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "HSYNC_LEN"); v != "" {
-		r.hLen, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "VSYNC_LEN"); v != "" {
-		r.vLen, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "HSYNC_ACTIVE"); v != "" {
-		r.hActive, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "VSYNC_ACTIVE"); v != "" {
-		r.vActive, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "DE_ACTIVE"); v != "" {
-		r.deActive, _ = strconv.Atoi(v)
-	}
-	if v := cfg.Get("RGB", "PCLK_ACTIVE"); v != "" {
-		r.pclkActive, _ = strconv.Atoi(v)
-	}
-	return nil
+	read("clock-frequency", &r.clk)
+	read("hactive", &r.h)
+	read("vactive", &r.v)
+	read("hback-porch", &r.hb)
+	read("hfront-porch", &r.hf)
+	read("vback-porch", &r.vb)
+	read("vfront-porch", &r.vf)
+	read("hsync-len", &r.hLen)
+	read("vsync-len", &r.vLen)
+	read("hsync-active", &r.hActive)
+	read("vsync-active", &r.vActive)
+	read("de-active", &r.deActive)
+	read("pixelclk-active", &r.pclkActive)
 }
 
 func (r *RGB) buildDTS(enable bool) string {
@@ -166,19 +146,19 @@ func (r *RGB) buildDTS(enable bool) string {
 	return fmt.Sprintf(`/dts-v1/;
 /plugin/;
 
-&{/syscon@ff000000/rgb} {
+&{%s} {
 	status = "%s";
 };
 
-&{/panel} {
+&{%s} {
 	status = "%s";
 };
 
-&{/reserved-memory/linux,cma} {
+&{%s} {
 	status = "%s";
 };
 
-&{/panel/display-timings/timing0} {
+&{%s/display-timings/timing0} {
 	clock-frequency = <0x%x>;
 	hactive = <0x%x>;
 	vactive = <0x%x>;
@@ -193,8 +173,8 @@ func (r *RGB) buildDTS(enable bool) string {
 	de-active = <0x%x>;
 	pixelclk-active = <0x%x>;
 };
-`, status, status, cmaStatus,
-		r.clk, r.h, r.v, r.hb, r.hf, r.vb, r.vf,
+`, r.node, status, r.panelNode, status, r.cmaNode, cmaStatus,
+		r.panelNode, r.clk, r.h, r.v, r.hb, r.hf, r.vb, r.vf,
 		r.hLen, r.vLen, r.hActive, r.vActive, r.deActive, r.pclkActive)
 }
 
@@ -212,23 +192,6 @@ func (r *RGB) SetParams(clk, h, v, hb, hf, vb, vf, hLen, vLen, hAct, vAct, deAct
 	r.vActive = vAct
 	r.deActive = deAct
 	r.pclkActive = pclkAct
-
-	kv := map[string]string{
-		"CLK":          strconv.Itoa(clk),
-		"HACTIVE":      strconv.Itoa(h),
-		"VACTIVE":      strconv.Itoa(v),
-		"HBACKPORCH":   strconv.Itoa(hb),
-		"HFRONTPORCH":  strconv.Itoa(hf),
-		"VBACKPORCH":   strconv.Itoa(vb),
-		"VFRONTPORCH":  strconv.Itoa(vf),
-		"HSYNC_LEN":    strconv.Itoa(hLen),
-		"VSYNC_LEN":    strconv.Itoa(vLen),
-		"HSYNC_ACTIVE": strconv.Itoa(hAct),
-		"VSYNC_ACTIVE": strconv.Itoa(vAct),
-		"DE_ACTIVE":    strconv.Itoa(deAct),
-		"PCLK_ACTIVE":  strconv.Itoa(pclkAct),
-	}
-	r.deps.Cfg.SetMulti("RGB", kv)
 }
 
 func (r *RGB) GetPins() []string {

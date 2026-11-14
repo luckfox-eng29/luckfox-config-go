@@ -12,6 +12,7 @@
   "features": {
     "has_4g_module": false,
     "dsi_fdt_node": "/dsi@ff640000",
+    "logo_rotate_node": "/display-subsystem/route/route-dsi",
     "touch": { "node": "/i2c@ff060000/gt911@14" }
   },
   "reserved_pins": [],

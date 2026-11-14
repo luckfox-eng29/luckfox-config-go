@@ -6,14 +6,15 @@
   "split_spi": true,
   "model_strings": ["Luckfox Pico Pi", "Luckfox Pico Pi W"],
   "boot_media": {
-    "mmc": "/dev/mmcblk0p4"
+    "mmc": "/dev/mmcblk0p4",
+    "nand": "/dev/mtdblock3"
   },
   "features": {
     "has_4g_module": true,
     "has_fbtft": false,
-    "has_usb": true,
-    "has_csi": true,
-    "has_rgb": false,
+    "usb_node": "/usbdrd/usb@ffb00000",
+    "csi_unite_node": "/rkisp@ffa00000",
+    "csi_bus_node": "/i2c@ff470000",
     "has_sdmmc": false
   },
   "reserved_pins": [],

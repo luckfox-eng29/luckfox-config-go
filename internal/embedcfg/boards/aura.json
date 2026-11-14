@@ -9,10 +9,9 @@
     "mmc": ["/dev/mmcblk1p4", "/dev/mmcblk0p4"]
   },
   "features": {
-    "has_dsi": true,
     "dsi_fdt_node": "/dsi@22120000",
+    "logo_rotate_node": "/display-subsystem/route/route-dsi",
     "touch": { "node": "/i2c@21120000/gt911@14" },
-    "has_csi": true,
     "has_4g": false
   },
   "pin_diagram": [

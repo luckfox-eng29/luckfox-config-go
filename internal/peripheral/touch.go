@@ -54,23 +54,30 @@ func (t *Touchscreen) ID() string { return "touchscreen" }
 // peripheral, the interrupt/reset pins are routed by pinctrl in the overlay.
 func (t *Touchscreen) PinsUsed() []int { return nil }
 
-func (t *Touchscreen) ConfigKeys() []string {
-	return []string{"TS_ENABLE", "TS_ADDRESS"}
-}
+func (t *Touchscreen) ConfigKeys() []string { return nil }
 
 func (t *Touchscreen) IsActive() bool {
 	return IsNodeEnabled(t.cfg.Node)
 }
 
-func (t *Touchscreen) IsConfigEnabled(cfg *config.Store) bool {
-	return cfg.Get("TS", "ENABLE") == "1"
-}
+// IsConfigEnabled is always false: the touchscreen state lives in the device
+// tree, not in the config store.
+func (t *Touchscreen) IsConfigEnabled(*config.Store) bool { return false }
 
 // Addresses returns the selectable I2C addresses of the controller.
 func (t *Touchscreen) Addresses() []string { return t.cfg.Addresses }
 
-// Address returns the I2C address the controller is configured at.
-func (t *Touchscreen) Address() string { return t.addr }
+// Address returns the I2C address recorded in the running device tree, falling
+// back to the pending selection and then to the board default.
+func (t *Touchscreen) Address() string {
+	if v, err := GetNodeU32(t.cfg.Node, "reg"); err == nil {
+		return fmt.Sprintf("0x%x", v)
+	}
+	if t.addr != "" {
+		return t.addr
+	}
+	return defaultTouchAddress(t.cfg)
+}
 
 // SetAddress selects the I2C address the controller is probed at.
 func (t *Touchscreen) SetAddress(addr string) error {
@@ -98,11 +105,7 @@ func (t *Touchscreen) Enable(ctx context.Context) error {
 	}
 
 	logger.Info("Touchscreen enabled", "node", t.cfg.Node, "address", t.addr)
-
-	return t.deps.Cfg.SetMulti("TS", map[string]string{
-		"ENABLE":  "1",
-		"ADDRESS": t.addr,
-	})
+	return nil
 }
 
 func (t *Touchscreen) Disable(ctx context.Context) error {
@@ -119,43 +122,28 @@ func (t *Touchscreen) Disable(ctx context.Context) error {
 	}
 
 	logger.Info("Touchscreen disabled", "node", t.cfg.Node)
-
-	return t.deps.Cfg.SetMulti("TS", map[string]string{
-		"ENABLE":  "0",
-		"ADDRESS": t.addr,
-	})
+	return nil
 }
 
+// LoadFromConfig syncs the pending address with the running device tree. Static
+// overlays are not replayed: the device tree already holds the configuration, so
+// load must not rewrite the boot partition.
 func (t *Touchscreen) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
 	t.deps.Cfg = cfg
-	if addr := cfg.Get("TS", "ADDRESS"); addr != "" {
-		t.addr = addr
-	}
-	if cfg.Get("TS", "ENABLE") != "1" {
-		return nil
-	}
-	if apply {
-		return t.Enable(ctx)
-	}
+	t.addr = t.Address()
 	return nil
 }
 
 // checkBusConflict rejects enabling the touchscreen while the I2C controller it
-// is attached to is already configured as a plain I2C bus.
+// is attached to is already enabled as a plain I2C bus. The bus node is enabled
+// by the touchscreen overlay itself, so an enabled bus next to a disabled touch
+// node means the bus is in use elsewhere.
 func (t *Touchscreen) checkBusConflict() error {
-	if t.cfg.BusNumber == 0 {
+	if t.cfg.Bus == "" {
 		return nil
 	}
-	// The I2C peripheral stores its state either under "I2C3" (RM_IO boards) or
-	// under "I2C3_Mx" (normal boards, one entry per mux).
-	candidates := []string{fmt.Sprintf("I2C%d", t.cfg.BusNumber)}
-	for _, mux := range []string{"M0", "M1", "M2", "M3"} {
-		candidates = append(candidates, fmt.Sprintf("I2C%d_%s", t.cfg.BusNumber, mux))
-	}
-	for _, key := range candidates {
-		if t.deps.Cfg.Get(key, "STATUS") == "1" {
-			return fmt.Errorf("I2C%d is enabled, disable it before enabling the touchscreen", t.cfg.BusNumber)
-		}
+	if IsNodeEnabled(t.cfg.Bus) && !IsNodeEnabled(t.cfg.Node) {
+		return fmt.Errorf("I2C%d is enabled, disable it before enabling the touchscreen", t.cfg.BusNumber)
 	}
 	return nil
 }

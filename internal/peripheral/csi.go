@@ -9,47 +9,47 @@ package peripheral
 import (
 	"context"
 	"fmt"
-	"strconv"
-	"strings"
 
 	"luckfox-config/internal/config"
 	"luckfox-config/internal/logger"
 )
 
-// csiUniteNode is the device tree node holding the CSI unite property.
-const csiUniteNode = "/rkisp@ffa00000"
+// csiUniteProp is the property of the ISP node that selects the unite mode.
+const csiUniteProp = "rockchip,unite"
 
-func boolToStr(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
-}
-
+// CSI manages the camera serial interface through a static device tree overlay.
+//
+// The node paths come from the board description: they differ between SoCs and
+// boards, so nothing here assumes a fixed address. CSI state lives in the boot
+// partition device tree only — it is never mirrored into the config store.
 type CSI struct {
-	deps Deps
+	deps      Deps
+	uniteNode string // ISP node carrying rockchip,unite
+	busNode   string // I2C bus the camera sensor sits on
+	unite     bool   // unite selection to be written by the next Enable
 }
 
-func NewCSI(deps Deps) *CSI {
-	return &CSI{deps: deps}
+func NewCSI(deps Deps, uniteNode, busNode string) *CSI {
+	return &CSI{deps: deps, uniteNode: uniteNode, busNode: busNode}
 }
 
 func (c *CSI) ID() string      { return "csi" }
 func (c *CSI) PinsUsed() []int { return nil }
-func (c *CSI) ConfigKeys() []string {
-	return []string{"CSI_ENABLE", "CSI_UNITE_ENABLE"}
-}
 
+// ConfigKeys returns nil: CSI is described by the device tree, not by the
+// config store.
+func (c *CSI) ConfigKeys() []string { return nil }
+
+// IsActive reports whether the ISP node is enabled in the running device tree.
 func (c *CSI) IsActive() bool {
-	return IsNodeEnabled("/rkisp@ffa00000")
+	return IsNodeEnabled(c.uniteNode)
 }
 
-func (c *CSI) IsConfigEnabled(cfg *config.Store) bool {
-	return cfg.Get("CSI", "ENABLE") == "1"
-}
+// IsConfigEnabled is always false: CSI has no config store representation.
+func (c *CSI) IsConfigEnabled(*config.Store) bool { return false }
 
 func (c *CSI) Enable(ctx context.Context) error {
-	return c.apply(true, c.deps.Cfg.Get("CSI", "UNITE") == "1")
+	return c.apply(true, c.unite)
 }
 
 func (c *CSI) Disable(ctx context.Context) error {
@@ -74,61 +74,51 @@ func (c *CSI) apply(enable bool, unite bool) error {
 	dts := fmt.Sprintf(`/dts-v1/;
 /plugin/;
 
-&{/i2c@ff470000} {
+&{%s} {
 	status = "%s";
 };
 
-&{/rkisp@ffa00000} {
-	rockchip,unite = <%d>;
+&{%s} {
+	%s = <%d>;
 };
-`, status, uniteVal)
+`, c.busNode, status, c.uniteNode, csiUniteProp, uniteVal)
 
 	if err := c.deps.Static.Apply(dts); err != nil {
 		return err
 	}
 
+	c.unite = unite
 	logger.Info("CSI configured", "enable", enable, "unite", unite)
-	return c.deps.Cfg.SetMulti("CSI", map[string]string{
-		"ENABLE": boolToStr(enable),
-		"UNITE":  boolToStr(unite),
-	})
-}
-
-func (c *CSI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
-	c.deps.Cfg = cfg
-	if cfg.Get("CSI", "ENABLE") != "1" {
-		return nil
-	}
-	if apply {
-		return c.Enable(ctx)
-	}
 	return nil
 }
 
-func (c *CSI) SetUnite(unite bool) {
-	c.deps.Cfg.Set("CSI", "UNITE", boolToStr(unite))
+// LoadFromConfig initialises the in-memory unite selection from the boot
+// partition device tree. Static overlays are not replayed: the device tree
+// already holds the configuration, so load must not rewrite the boot partition.
+func (c *CSI) LoadFromConfig(ctx context.Context, cfg *config.Store, apply bool) error {
+	c.deps.Cfg = cfg
+	c.unite = c.UniteEnabled() == 1
+	return nil
 }
 
-// UniteEnabled reads rockchip,unite from the boot partition device tree.
-// It returns 1 when unite is enabled, 0 when the property is absent, matching
-// the legacy get_csi_unite subcommand of the shell implementation.
-func (c *CSI) UniteEnabled() (int, error) {
-	if c.deps.Static == nil {
-		return 0, fmt.Errorf("static overlay not available")
-	}
+// SetUnite selects the unite mode for the next Enable call. It only touches
+// memory; the device tree is written by Enable.
+func (c *CSI) SetUnite(unite bool) {
+	c.unite = unite
+}
 
-	raw, err := c.deps.Static.GetProperty(csiUniteNode, "rockchip,unite")
+// UniteEnabled reads rockchip,unite from the running device tree. It returns 1
+// when unite is enabled and 0 when the property is absent, matching the legacy
+// get_csi_unite subcommand of the shell implementation.
+func (c *CSI) UniteEnabled() int {
+	v, err := GetNodeU32(c.uniteNode, csiUniteProp)
 	if err != nil {
 		// Missing property means unite is disabled.
-		logger.Debug("rockchip,unite not found, assuming disabled", "node", csiUniteNode, "error", err)
-		return 0, nil
+		logger.Debug("rockchip,unite not found, assuming disabled",
+			"node", c.uniteNode, "error", err)
+		return 0
 	}
-
-	v, err := strconv.ParseInt(strings.TrimSpace(raw), 0, 32)
-	if err != nil {
-		return 0, fmt.Errorf("parse rockchip,unite %q: %w", raw, err)
-	}
-	return int(v), nil
+	return int(v)
 }
 
 var _ Peripheral = (*CSI)(nil)

@@ -328,13 +328,13 @@ func newAdvancedMenu(appCtx *AppContext) ListMenuModel {
 	if len(appCtx.Board.Peripherals.CAN) > 0 {
 		items = append(items, MenuItem{Label: "CAN", Value: "can"})
 	}
-	if appCtx.Board.Features.HasUSB {
+	if appCtx.Board.Features.USBNode != "" {
 		items = append(items, MenuItem{Label: "USB", Value: "usb"})
 	}
-	if appCtx.Board.Features.HasCSI {
+	if appCtx.Board.Features.CSIUniteNode != "" {
 		items = append(items, MenuItem{Label: "CSI", Value: "csi"})
 	}
-	if appCtx.Board.Features.HasRGB {
+	if appCtx.Board.Features.RGBNode != "" {
 		items = append(items, MenuItem{Label: "RGB", Value: "rgb"})
 	}
 	if appCtx.Board.Features.Touch.Bus != "" {

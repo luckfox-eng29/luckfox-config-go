@@ -42,7 +42,7 @@ const (
 func main() {
 	root := &cobra.Command{
 		Use:   "luckfox-config",
-		Short: "Luckfox Lyra board configuration tool",
+		Short: "Luckfox board configuration tool",
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if showVersion {
 				fmt.Fprintln(cmd.OutOrStdout(), version.String())
@@ -167,6 +167,8 @@ func initAppContext(bc *board.BoardConfig, cfgPath string) (*tui.AppContext, err
 		PinctrlNaming: bc.PinctrlNaming,
 		SplitSPI:      bc.SplitSPI,
 		Touch:         bc.Features.Touch,
+		USBNode:       bc.Features.USBNode,
+		LogoRotate:    bc.Features.LogoRotateNode,
 	}
 
 	panels, err := peripheral.LoadPanelFamilies(embedcfg.FS, "panels")
@@ -337,7 +339,9 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 	}
 
 	// DSI
-	reg.Register(peripheral.NewDSI(deps, bc.Features.DSIFDTNode, panels))
+	if bc.Features.DSIFDTNode != "" {
+		reg.Register(peripheral.NewDSI(deps, bc.Features.DSIFDTNode, panels))
+	}
 
 	// TouchScreen (standalone GT911 switch, e.g. RV1106 Pico Ultra)
 	if bc.Features.Touch.Node != "" && bc.Features.Touch.Bus != "" {
@@ -360,18 +364,19 @@ func buildRegistry(bc *board.BoardConfig, deps peripheral.Deps, panels []periphe
 	}
 
 	// USB
-	if bc.Features.HasUSB {
-		reg.Register(peripheral.NewUSB(deps))
+	if bc.Features.USBNode != "" {
+		reg.Register(peripheral.NewUSB(deps, bc.Features.USBNode))
 	}
 
 	// CSI
-	if bc.Features.HasCSI {
-		reg.Register(peripheral.NewCSI(deps))
+	if bc.Features.CSIUniteNode != "" && bc.Features.CSIBusNode != "" {
+		reg.Register(peripheral.NewCSI(deps, bc.Features.CSIUniteNode, bc.Features.CSIBusNode))
 	}
 
 	// RGB
-	if bc.Features.HasRGB {
-		reg.Register(peripheral.NewRGB(deps, bc.Features.RGBPins))
+	if bc.Features.RGBNode != "" {
+		reg.Register(peripheral.NewRGB(deps, bc.Features.RGBNode, bc.Features.RGBPanelNode,
+			bc.Features.RGBCMANode, bc.Features.RGBPins))
 	}
 
 	// SDMMC

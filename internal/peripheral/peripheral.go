@@ -54,6 +54,8 @@ type Deps struct {
 	PinctrlNaming string // "v1" or "v2"
 	SplitSPI      bool
 	Touch         board.TouchConfig // touch controller of the board, zero value when there is none
+	USBNode       string            // USB OTG controller node, empty when the board has none
+	LogoRotate    string            // display route node carrying logo,rotate for the DSI logo
 }
 
 // MapRMIOToGPIO converts an RM_IO index to a raw GPIO number if the chip uses RM_IO.
@@ -91,13 +93,23 @@ func Exists(pattern string) bool {
 	return len(matches) > 0
 }
 
+// procPath returns the runtime device tree path of a node. Paths that already
+// point into /proc/device-tree are returned unchanged.
+func procPath(path string) string {
+	if strings.HasPrefix(path, procDeviceTree) {
+		return path
+	}
+	return procDeviceTree + path
+}
+
 // IsNodeEnabled reports whether a device tree node is available. A node without
 // a status property is available by default (Devicetree Specification, "status");
 // only an explicit status may disable it. A missing node counts as unavailable.
 func IsNodeEnabled(path string) bool {
-	if !strings.HasPrefix(path, "/proc/device-tree") {
-		path = "/proc/device-tree" + path
+	if path == "" {
+		return false
 	}
+	path = procPath(path)
 	data, err := os.ReadFile(filepath.Join(path, "status"))
 	if err != nil {
 		// No status property: available when the node itself exists.
@@ -106,6 +118,47 @@ func IsNodeEnabled(path string) bool {
 	}
 	s := strings.TrimRight(string(data), "\x00")
 	return s == "okay" || s == "ok"
+}
+
+// ReadNodeProp returns the raw value of a device tree property of the running
+// system. Device tree properties are raw bytes: strings carry a trailing NUL
+// and integers are big-endian, see GetNodeString and GetNodeU32.
+func ReadNodeProp(path, prop string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(procPath(path), prop))
+	if err != nil {
+		return nil, fmt.Errorf("read %s/%s: %w", path, prop, err)
+	}
+	return data, nil
+}
+
+// GetNodeString returns a string property of a device tree node of the running
+// system, without the trailing NUL bytes.
+func GetNodeString(path, prop string) (string, error) {
+	data, err := ReadNodeProp(path, prop)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\x00"), nil
+}
+
+// GetNodeU32 returns the first cell of an integer property of a device tree
+// node of the running system. Device tree cells are big-endian.
+func GetNodeU32(path, prop string) (uint32, error) {
+	data, err := ReadNodeProp(path, prop)
+	if err != nil {
+		return 0, err
+	}
+	if len(data) < 4 {
+		return 0, fmt.Errorf("property %s/%s is %d bytes, want at least 4", path, prop, len(data))
+	}
+	return uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3]), nil
+}
+
+// GetNodeBool reports whether a boolean property of a device tree node of the
+// running system is present.
+func GetNodeBool(path, prop string) bool {
+	_, err := ReadNodeProp(path, prop)
+	return err == nil
 }
 
 // GetNodePhandle returns the phandle of a device tree node.
