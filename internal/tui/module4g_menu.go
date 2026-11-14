@@ -12,8 +12,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"luckfox-config/internal/peripheral"
 )
 
 func newModule4GMenu(appCtx *AppContext) ListMenuModel {
@@ -26,19 +24,13 @@ func newModule4GMenu(appCtx *AppContext) ListMenuModel {
 		if err != nil {
 			return Status("4G module not available on this board", true)
 		}
-		m4g := p.(*peripheral.Module4G)
-		_ = m4g // used below
-
 		if item.Value == "disable" {
-			return tea.Batch(
-				LoadingFull("Disabling 4G module...", 0, 0),
-				func() tea.Msg {
-					if err := p.Disable(appCtx.Ctx); err != nil {
-						return StatusMsg{Text: err.Error(), IsError: true}
-					}
-					return DoneLoadingMsg{Text: "4G module disabled", PopCount: -1}
-				},
-			)
+			return LoadingWork("Disabling 4G module...", func() tea.Msg {
+				if err := p.Disable(appCtx.Ctx); err != nil {
+					return StatusMsg{Text: err.Error(), IsError: true}
+				}
+				return DoneLoadingMsg{Text: "4G module disabled", PopCount: -1}
+			})
 		}
 		return NavigatePush(newModule4GModeMenu(appCtx))
 	})
@@ -63,21 +55,18 @@ func newModule4GModeMenu(appCtx *AppContext) ListMenuModel {
 		}
 		p, _ := appCtx.Registry.Get("module_4g")
 
-		return tea.Batch(
-			LoadingFull("Switching mode, please wait patiently...", 0, 0),
-			func() tea.Msg {
-				start := time.Now()
-				if err := p.Enable(appCtx.Ctx); err != nil {
-					return StatusMsg{Text: err.Error(), IsError: true}
-				}
-				// Ensure animation stays for at least a few seconds if it was too fast
-				elapsed := time.Since(start)
-				if elapsed < 5*time.Second {
-					time.Sleep(5*time.Second - elapsed)
-				}
-				return DoneLoadingMsg{Text: fmt.Sprintf("4G module enabled in %s mode", strings.ToUpper(item.Value)), PopCount: -1}
-			},
-		)
+		return LoadingWork("Switching mode, please wait patiently...", func() tea.Msg {
+			start := time.Now()
+			if err := p.Enable(appCtx.Ctx); err != nil {
+				return StatusMsg{Text: err.Error(), IsError: true}
+			}
+			// Ensure animation stays for at least a few seconds if it was too fast
+			elapsed := time.Since(start)
+			if elapsed < 5*time.Second {
+				time.Sleep(5*time.Second - elapsed)
+			}
+			return DoneLoadingMsg{Text: fmt.Sprintf("4G module enabled in %s mode", strings.ToUpper(item.Value)), PopCount: -1}
+		})
 	})
 }
 
@@ -116,18 +105,15 @@ func enablePPP(appCtx *AppContext, apn string) tea.Cmd {
 	}
 	p, _ := appCtx.Registry.Get("module_4g")
 
-	return tea.Batch(
-		LoadingFull("Switching mode, please wait patiently...", 0, 0),
-		func() tea.Msg {
-			start := time.Now()
-			if err := p.Enable(appCtx.Ctx); err != nil {
-				return StatusMsg{Text: err.Error(), IsError: true}
-			}
-			elapsed := time.Since(start)
-			if elapsed < 5*time.Second {
-				time.Sleep(5*time.Second - elapsed)
-			}
-			return DoneLoadingMsg{Text: fmt.Sprintf("4G PPP enabled with APN=%s", apn), PopCount: -1}
-		},
-	)
+	return LoadingWork("Switching mode, please wait patiently...", func() tea.Msg {
+		start := time.Now()
+		if err := p.Enable(appCtx.Ctx); err != nil {
+			return StatusMsg{Text: err.Error(), IsError: true}
+		}
+		elapsed := time.Since(start)
+		if elapsed < 5*time.Second {
+			time.Sleep(5*time.Second - elapsed)
+		}
+		return DoneLoadingMsg{Text: fmt.Sprintf("4G PPP enabled with APN=%s", apn), PopCount: -1}
+	})
 }
