@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"luckfox-config/internal/board"
@@ -97,7 +98,7 @@ func (c *CompatibleApp) Enable(ctx context.Context) error {
 		}
 	}
 
-	if err := c.applyPullUps(); err != nil {
+	if err := c.applyPinSettings(); err != nil {
 		return err
 	}
 	if err := c.applyNodes(); err != nil {
@@ -150,11 +151,11 @@ func (c *CompatibleApp) Check() (string, bool) {
 
 // Ready reports whether the app is up and correct right now: every interface it
 // enables is active, none of the pins it depends on is occupied, and every pin
-// pull it declares is in force. All three must hold; the app list marks passing
-// entries with "(Ready)".
+// mux mode and pull it declares is in force. All three must hold; the app list
+// marks passing entries with "(Ready)".
 //
-// The pull condition reads the pin registers back, so it can only pass after
-// Enable has applied the pulls.
+// The pin condition reads the iomux and pull registers back, so it can only pass
+// after Enable has applied them.
 func (c *CompatibleApp) Ready() bool {
 	if _, free := c.Check(); !free {
 		return false
@@ -162,29 +163,42 @@ func (c *CompatibleApp) Ready() bool {
 	if !c.IsActive() {
 		return false
 	}
-	return c.pullsApplied()
+	return c.pinStateApplied()
 }
 
-// pullsApplied reports whether the pull resistors the app declares are the ones
-// currently programmed. A pin that cannot be parsed or read counts as not
-// applied: a pull that cannot be verified is not a pull in force.
-func (c *CompatibleApp) pullsApplied() bool {
+// pinStateApplied reports whether the mux function and pull resistors the app
+// declares are the ones currently programmed. A pin that cannot be parsed or
+// read counts as not applied: a setting that cannot be verified is not in force.
+func (c *CompatibleApp) pinStateApplied() bool {
 	for _, g := range c.spec.GPIO {
-		want, ok := parsePull(g.Pull)
-		if !ok {
-			continue // no pull required for this pin
+		wantPull, hasPull := parsePull(g.Pull)
+		if g.Mode == nil && !hasPull {
+			continue // nothing declared for this pin
 		}
 		pin, err := board.ParseGPIO(g.Pin)
 		if err != nil {
 			logger.Debug("compatible app: unparsable pin", "app", c.spec.Name, "pin", g.Pin, "error", err)
 			return false
 		}
+		if g.Mode != nil {
+			got, err := GetPinMode(c.deps.Chip, pin.Raw())
+			if err != nil {
+				logger.Debug("compatible app: pin mode unreadable", "app", c.spec.Name, "pin", g.Pin, "error", err)
+				return false
+			}
+			if got != *g.Mode {
+				return false
+			}
+		}
+		if !hasPull {
+			continue
+		}
 		got, err := GetPull(c.deps.Chip, pin.Raw())
 		if err != nil {
 			logger.Debug("compatible app: pin pull unreadable", "app", c.spec.Name, "pin", g.Pin, "error", err)
 			return false
 		}
-		if got != want {
+		if got != wantPull {
 			return false
 		}
 	}
@@ -277,18 +291,32 @@ func expandIDs(ids []string) []string {
 	return out
 }
 
-// applyPullUps writes the app's GPIO pull resistors. Enabling the app is the
-// app's job; the pin layer records the setting at the pin level, so the app
-// owns no config keys of its own.
-func (c *CompatibleApp) applyPullUps() error {
+// applyPinSettings writes the app's per-pin settings: the iomux function it
+// declares, then its pull resistor. Enabling the app is the app's job; the pin
+// layer records both settings at the pin level, so the app owns no config keys
+// of its own and the boot-time pin replay re-applies them.
+func (c *CompatibleApp) applyPinSettings() error {
 	for _, g := range c.spec.GPIO {
-		pull, ok := parsePull(g.Pull)
-		if !ok {
+		pull, hasPull := parsePull(g.Pull)
+		if g.Mode == nil && !hasPull {
 			continue
 		}
 		pin, err := board.ParseGPIO(g.Pin)
 		if err != nil {
-			return fmt.Errorf("pull %s: %w", g.Pin, err)
+			return fmt.Errorf("pin %s: %w", g.Pin, err)
+		}
+		// The mux goes first: a pull resistor on a pin that still serves another
+		// function is written to a pin the app does not own yet.
+		if g.Mode != nil {
+			if err := SetPinMode(c.deps.Chip, pin.Raw(), *g.Mode); err != nil {
+				return fmt.Errorf("mode %s: %w", g.Pin, err)
+			}
+			if err := SavePinSetting(c.deps.Cfg, pin.String(), "MODE", strconv.Itoa(*g.Mode)); err != nil {
+				return fmt.Errorf("mode %s: %w", g.Pin, err)
+			}
+		}
+		if !hasPull {
+			continue
 		}
 		if err := SetPull(c.deps.Chip, pin.Raw(), pull); err != nil {
 			return fmt.Errorf("pull %s: %w", g.Pin, err)
